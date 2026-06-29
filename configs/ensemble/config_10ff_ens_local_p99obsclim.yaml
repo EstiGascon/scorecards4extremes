@@ -1,0 +1,147 @@
+# ============================================================================
+# Ensemble LOCAL: 10ff — per-station 99th percentile from obs climatology
+# ============================================================================
+# Uses the local_obs_climatology threshold method: reads clim_10ff_1_MM_*
+# GEO NCOLS files and looks up the per-station 99th percentile per month.
+#
+# Climatology: SYNOP+HDOBS 10m wind speed 1-day mean, 2005–2024, 65% min avail
+# ifs_ens vs aifs_ens
+# Period: 2025-08-01 to 2026-02-28  —  Steps: 24h / 72h / 120h (days 1, 3, 5)
+# ============================================================================
+
+variable: "10ff"
+start_date: "2025-08-01"
+end_date: "2026-02-28"
+mode: "ensemble"
+steps: [24, 72, 120]
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# ENSEMBLE SETTINGS
+# ============================================================================
+ensemble:
+  n_members: 50
+  include_control: false
+
+# ============================================================================
+# STEP 1: READ DATA
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "ifs_ens"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/10ff/forecast_ENS/raw/ifs_ens"
+
+  forecast_model2:
+    name: "hybrid_ens"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/10ff/forecast_ENS/raw/hybrid_ens"
+
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/10wind_speed/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: true
+  lapse_rate_correction: false
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/10ff_ens_local_p99obsclim_hybrid"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: ["DJF", "MAM", "JJA", "SON"]
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: false
+  coastal_lsm_threshold: 0.9
+  remove_outliers: false
+  outlier_threshold_std: 5.0
+  min_valid_wind_speed: 0.0
+  max_valid_wind_speed: 75.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "10ff"
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+    percentile: 99
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  ensemble:
+    - "twCRPS"
+    - "fCRPS"
+    - "Brier"
+    - "extreme_spread_skill_ratio"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 100
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/10ff_ens_local_p99obsclim_hybrid"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 300
+  format: "png"

@@ -1,0 +1,69 @@
+[ECMWF-INFO -sbatch] - -------------------------------------------------------------------------------------
+[ECMWF-INFO -sbatch] -  This is the ECMWF jobfilter
+[ECMWF-INFO -sbatch] -  +++ Please report issues using the Support portal +++
+[ECMWF-INFO -sbatch] -  +++ https://support.ecmwf.int                     +++
+[ECMWF-INFO -sbatch] -  /usr/local/bin/ecsbatch: size: 53801, mtime: Tue Nov 25 12:31:30 2025
+[ECMWF-INFO -sbatch] - -------------------------------------------------------------------------------------
+[ECMWF-INFO -sbatch] - Time at submit: Fri May 29 15:46:56 2026 (1780069616.346807) on ac6-100.bullx:/etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local_Italy
+[ECMWF-INFO -sbatch] - --- SLURM VARIABLES ---
+[ECMWF-INFO -sbatch] - EC_CLUSTER=ac
+[ECMWF-INFO -sbatch] - SLURM_EXPORT_ENV=ALL
+[ECMWF-INFO -sbatch] - SBATCH_EXPORT=NONE
+[ECMWF-INFO -sbatch] - -----------------------
+[ECMWF-INFO -sbatch] - jobscript: /etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local_Italy/run.sh
+[ECMWF-INFO -sbatch] - --- SCRIPT OPTIONS ---
+[ECMWF-INFO -sbatch] - #SBATCH --mem=64G
+[ECMWF-INFO -sbatch] - #SBATCH --time=48:00:00
+[ECMWF-INFO -sbatch] - #SBATCH --job-name=obsclim_Italy
+[ECMWF-INFO -sbatch] - -----------------------
+[ECMWF-INFO -sbatch] - --- POST-PROCESSED OPTIONS ---
+[ECMWF-INFO -sbatch] - ARG --positional=['run.sh']
+[ECMWF-INFO -sbatch] - ARG --job_name=obsclim_Italy
+[ECMWF-INFO -sbatch] - ARG --time=48:00:00
+[ECMWF-INFO -sbatch] - ARG --mem=64G
+[ECMWF-INFO -sbatch] - ------------------------------
+[ECMWF-INFO -sbatch] - No qos requested, assuming qos=nf
+[ECMWF-INFO -sbatch] - jobtag: moeg-obsclim_Italy-1x2-/etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local_Italy/slurm-_JOBID_.out
+[ECMWF-INFO -sbatch] - ------------------------------
+[ECMWF-INFO -sbatch] - Average Walltime 0 with a Standard Deviation 0
+[ECMWF-INFO -sbatch] - Runtime history
+[ECMWF-INFO -sbatch] -   Date               | Cores   Cluster   Walltime       Mem
+[ECMWF-INFO -sbatch] - 
+[ECMWF-INFO -sbatch] - ['/usr/bin/sbatch', '--job-name=obsclim_Italy', '--time=48:00:00', '--mem=64G', '--qos=nf', '--licenses=h2resw01', '--export=EC_user_time_limit=48:00:00', '/etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local_Italy/run.sh']
+[ECMWF-INFO -sbatch] - sbatch executed on ac
+[ECMWF-INFO -sbatch] - Job queued on ac using method local
+[ECMWF-INFO -sbatch] - Submitted batch job 39577743
+[ECMWF-INFO -ecprofile] /usr/bin/bash NON_INTERACTIVE on ac6-121 at 20260529_154715.556, PID: 3408095, JOBID: 39577743
+[ECMWF-INFO -ecprofile] $SCRATCH=/ec/res4/scratch/moeg
+[ECMWF-INFO -ecprofile] $PERM=/perm/moeg
+[ECMWF-INFO -ecprofile] $HPCPERM=/ec/res4/hpcperm/moeg
+[ECMWF-INFO -ecprofile] $TMPDIR=/etc/ecmwf/ssd/ssd1/tmpdirs/moeg.39577743
+[ECMWF-INFO -ecprofile] $SCRATCHDIR=/ec/res4/scratchdir/moeg/7/39577743
+/var/spool/slurmd/job39577743/slurm_script: line 15: 3408147 Segmentation fault      python3 ${CLIMDIR}/obsclim.py ${CLIMDIR} > ${CLIMDIR}/out_tp_allyear_50_with_p995_p999 2>&1
+[ECMWF-INFO -ecepilog] ----------------------------------------------------------------------------------------------------
+[ECMWF-INFO -ecepilog] This is the ECMWF job Epilogue
+[ECMWF-INFO -ecepilog] +++ Please report issues using the Support portal +++
+[ECMWF-INFO -ecepilog] +++ https://support.ecmwf.int                     +++
+[ECMWF-INFO -ecepilog] ----------------------------------------------------------------------------------------------------
+[ECMWF-INFO -ecepilog] Run at 2026-05-29T15:57:41 on ac
+[ECMWF-INFO -ecepilog] JobName                   : obsclim_Italy
+[ECMWF-INFO -ecepilog] JobID                     : 39577743
+[ECMWF-INFO -ecepilog] Submit                    : 2026-05-29T15:46:56
+[ECMWF-INFO -ecepilog] Start                     : 2026-05-29T15:47:08
+[ECMWF-INFO -ecepilog] End                       : 2026-05-29T15:57:41
+[ECMWF-INFO -ecepilog] QueuedTime                : 12.0
+[ECMWF-INFO -ecepilog] ElapsedRaw                : 633
+[ECMWF-INFO -ecepilog] ExitCode                  : 11:0
+[ECMWF-INFO -ecepilog] DerivedExitCode           : 0:0
+[ECMWF-INFO -ecepilog] State                     : FAILED
+[ECMWF-INFO -ecepilog] Account                   : ecodmdmo
+[ECMWF-INFO -ecepilog] QOS                       : nf
+[ECMWF-INFO -ecepilog] User                      : moeg
+[ECMWF-INFO -ecepilog] StdOut                    : /etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local_Italy/slurm-39577743.out
+[ECMWF-INFO -ecepilog] StdErr                    : /etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local_Italy/slurm-39577743.out
+[ECMWF-INFO -ecepilog] NNodes                    : 1
+[ECMWF-INFO -ecepilog] NCPUS                     : 2
+[ECMWF-INFO -ecepilog] SBU                       : 3.000
+[ECMWF-INFO -ecepilog] jobtag                    : moeg-obsclim_Italy-1x2-/etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local_Italy/slurm-_JOBID_.out
+[ECMWF-INFO -ecepilog] ----------------------------------------------------------------------------------------------------
+

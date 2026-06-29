@@ -1,0 +1,149 @@
+# ============================================================================
+# Local pipeline: 2t — per-station 1st pct from local obs climatology
+# ============================================================================
+# ifs4destine50r1 (model1) vs destine50r1 (model2)
+# Period: 2024-07-01 to 2026-02-28
+# Forecast days: 1–5, no season split (full period together)
+# Threshold: per-station p1 from local obs climatology files (cold extremes)
+# lapse-rate correction applied (2t in Celsius)
+# ============================================================================
+
+variable: "2t"
+start_date: "2025-03-01"
+end_date: "2026-02-28"
+mode: "deterministic"
+forecast_days: [1, 3, 5]
+lead_time_frequency: 6
+skip_extraction_if_exists: true
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA (local GRIB)
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "ifs_oper"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw/ifs_oper"
+
+  forecast_model2:
+    name: "iekm"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw/iekm"
+
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/2mtemp/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: true
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/2t_local_p1obsclim_ifs_oper_iekm_new"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco2559.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/destine_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: ["DJF", "MAM", "JJA", "SON"]
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: false
+  outlier_threshold_std: 5.0
+  min_valid_temperature: -60.0
+  max_valid_temperature: 60.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station 1st pct from local obs climatology files
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "2t"
+    percentile: 99
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twMAE_hit_mae"
+    - "twMAE_miss_severity"
+    - "twMAE_fa_severity"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 500
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/2t_local_p99obsclim_ifs_oper_iekm_new"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 300
+  format: "png"

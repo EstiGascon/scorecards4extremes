@@ -1,0 +1,80 @@
+[ECMWF-INFO -sbatch] - -------------------------------------------------------------------------------------
+[ECMWF-INFO -sbatch] -  This is the ECMWF jobfilter
+[ECMWF-INFO -sbatch] -  +++ Please report issues using the Support portal +++
+[ECMWF-INFO -sbatch] -  +++ https://support.ecmwf.int                     +++
+[ECMWF-INFO -sbatch] -  /usr/local/bin/ecsbatch: size: 53801, mtime: Tue Nov 25 12:31:30 2025
+[ECMWF-INFO -sbatch] - -------------------------------------------------------------------------------------
+[ECMWF-INFO -sbatch] - Time at submit: Wed May  6 17:36:56 2026 (1778089016.4175813) on ac6-101.bullx:/etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local
+[ECMWF-INFO -sbatch] - --- SLURM VARIABLES ---
+[ECMWF-INFO -sbatch] - EC_CLUSTER=ac
+[ECMWF-INFO -sbatch] - SLURM_EXPORT_ENV=ALL
+[ECMWF-INFO -sbatch] - SBATCH_EXPORT=NONE
+[ECMWF-INFO -sbatch] - -----------------------
+[ECMWF-INFO -sbatch] - jobscript: /etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local/run.sh
+[ECMWF-INFO -sbatch] - --- SCRIPT OPTIONS ---
+[ECMWF-INFO -sbatch] - #SBATCH --mem=32G
+[ECMWF-INFO -sbatch] - #SBATCH --time=48:00:00
+[ECMWF-INFO -sbatch] - #SBATCH --job-name=obsclim
+[ECMWF-INFO -sbatch] - -----------------------
+[ECMWF-INFO -sbatch] - --- POST-PROCESSED OPTIONS ---
+[ECMWF-INFO -sbatch] - ARG --positional=['run.sh']
+[ECMWF-INFO -sbatch] - ARG --job_name=obsclim
+[ECMWF-INFO -sbatch] - ARG --time=48:00:00
+[ECMWF-INFO -sbatch] - ARG --mem=32G
+[ECMWF-INFO -sbatch] - ------------------------------
+[ECMWF-INFO -sbatch] - No qos requested, assuming qos=nf
+[ECMWF-INFO -sbatch] - jobtag: moeg-obsclim-1x2-/etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local/slurm-_JOBID_.out
+[ECMWF-INFO -sbatch] - ------------------------------
+[ECMWF-INFO -sbatch] - Average Walltime 0 with a Standard Deviation 0
+[ECMWF-INFO -sbatch] - Runtime history
+[ECMWF-INFO -sbatch] -   Date               | Cores   Cluster   Walltime       Mem
+[ECMWF-INFO -sbatch] - 
+[ECMWF-INFO -sbatch] - ['/usr/bin/sbatch', '--job-name=obsclim', '--time=48:00:00', '--mem=32G', '--qos=nf', '--licenses=h2resw01', '--export=EC_user_time_limit=48:00:00', '/etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local/run.sh']
+[ECMWF-INFO -sbatch] - sbatch executed on ac
+[ECMWF-INFO -sbatch] - Job queued on ac using method local
+[ECMWF-INFO -sbatch] - Submitted batch job 38199838
+[ECMWF-INFO -ecprofile] /usr/bin/bash NON_INTERACTIVE on ac6-167 at 20260506_173705.897, PID: 1745821, JOBID: 38199838
+[ECMWF-INFO -ecprofile] $SCRATCH=/ec/res4/scratch/moeg
+[ECMWF-INFO -ecprofile] $PERM=/perm/moeg
+[ECMWF-INFO -ecprofile] $HPCPERM=/ec/res4/hpcperm/moeg
+[ECMWF-INFO -ecprofile] $TMPDIR=/etc/ecmwf/ssd/ssd1/tmpdirs/moeg.38199838
+[ECMWF-INFO -ecprofile] $SCRATCHDIR=/ec/res4/scratchdir/moeg/6/38199838
+/var/spool/slurmd/job38199838/slurm_script: line 6: 1746115 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 01 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_01 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 7: 1794245 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 02 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_02 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 8: 1833110 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 03 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_03 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 9: 1868634 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 04 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_04 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 10: 1898471 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 05 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_05 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 11: 1924945 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 06 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_06 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 12: 1955911 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 07 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_07 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 13: 2014278 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 08 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_08 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 14: 2079393 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 09 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_09 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 15: 2121185 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 10 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_10 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 16: 2170994 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 11 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_11 2>&1
+/var/spool/slurmd/job38199838/slurm_script: line 17: 2228205 Segmentation fault      python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tp 0.65 2005 2024 12 /home/moeg/scorecards4extremes/obs_clim_local > out_tp_12 2>&1
+[ECMWF-INFO -ecepilog] ----------------------------------------------------------------------------------------------------
+[ECMWF-INFO -ecepilog] This is the ECMWF job Epilogue
+[ECMWF-INFO -ecepilog] +++ Please report issues using the Support portal +++
+[ECMWF-INFO -ecepilog] +++ https://support.ecmwf.int                     +++
+[ECMWF-INFO -ecepilog] ----------------------------------------------------------------------------------------------------
+[ECMWF-INFO -ecepilog] Run at 2026-05-06T17:56:15 on ac
+[ECMWF-INFO -ecepilog] JobName                   : obsclim
+[ECMWF-INFO -ecepilog] JobID                     : 38199838
+[ECMWF-INFO -ecepilog] Submit                    : 2026-05-06T17:36:56
+[ECMWF-INFO -ecepilog] Start                     : 2026-05-06T17:36:59
+[ECMWF-INFO -ecepilog] End                       : 2026-05-06T17:56:15
+[ECMWF-INFO -ecepilog] QueuedTime                : 3.0
+[ECMWF-INFO -ecepilog] ElapsedRaw                : 1156
+[ECMWF-INFO -ecepilog] ExitCode                  : 11:0
+[ECMWF-INFO -ecepilog] DerivedExitCode           : 0:0
+[ECMWF-INFO -ecepilog] State                     : FAILED
+[ECMWF-INFO -ecepilog] Account                   : ecodmdmo
+[ECMWF-INFO -ecepilog] QOS                       : nf
+[ECMWF-INFO -ecepilog] User                      : moeg
+[ECMWF-INFO -ecepilog] StdOut                    : /etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local/slurm-38199838.out
+[ECMWF-INFO -ecepilog] StdErr                    : /etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local/slurm-38199838.out
+[ECMWF-INFO -ecepilog] NNodes                    : 1
+[ECMWF-INFO -ecepilog] NCPUS                     : 2
+[ECMWF-INFO -ecepilog] SBU                       : 5.479
+[ECMWF-INFO -ecepilog] jobtag                    : moeg-obsclim-1x2-/etc/ecmwf/nfs/dh1_home_a/moeg/scorecards4extremes/obs_clim_local/slurm-_JOBID_.out
+[ECMWF-INFO -ecepilog] ----------------------------------------------------------------------------------------------------
+

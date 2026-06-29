@@ -1,0 +1,148 @@
+# ============================================================================
+# Scorecards4Extremes - 24h Precipitation Configuration
+# ============================================================================
+# Analysis of 24-hour accumulated precipitation extremes
+# ============================================================================
+
+# Basic information
+variable: "tp24"  # 24-hour accumulated precipitation
+start_date: "2024-01-01"
+end_date: "2024-12-31"
+
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# Lead time specification
+forecast_days: [1,2,3,4,5,6,7,8,9,10]
+lead_time_frequency: 24  # Every 24 hours
+
+# ============================================================================
+# STEP 1: READ DATA
+# ============================================================================
+read_data:
+  # --- Forecast Model 1: ---
+  forecast_model1:
+    name: "iwkn"
+    source: "local_grib"
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw/iwkn"
+  
+  # --- Forecast Model 2: ---
+  forecast_model2:
+    name: "iqwf"
+    source: "local_grib"
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw/iqwf"
+  
+  # --- Observation data ---
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false  # Not applicable for precipitation
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24"
+  save_format: "pandas"
+  area: "nh_extratropics"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path: "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  
+  model2:
+  #  lsm_path: "/ec/vol/destine/continuous_evaluation/lsm_tco2559.grib"
+  #  orog_path: "/ec/vol/destine/continuous_evaluation/destine_orog.grib"
+    lsm_path: "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  
+  sdfor_path: "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  area: "nh_extratropics"
+  lead_times: null
+  season: ["DJF", "MAM", "JJA", "SON"]
+  #season: ["DJF", "JJA"]
+  orography_type: ["low", "mid", "high"]
+  
+  # Coastal station filtering
+  remove_coastal_stations: true  # Remove coastal stations (keep inland only)
+  coastal_lsm_threshold: 0.9     # LSM threshold (0=water, 1=land, default 0.9)
+  
+  remove_outliers: false
+  outlier_threshold_std: 5.0
+  
+  # Precipitation quality control
+  max_valid_precipitation: 800.0  # Remove observations > 800mm (likely bad data)
+
+# ============================================================================
+# STEP 5: CALCULATE THRESHOLD FOR EXTREMES
+# ============================================================================
+threshold:
+  method: "fixed"
+  fixed:
+    value: 30.0         # Fixed threshold in mm
+    event_type: "above" # heavy precipitation extremes (above threshold)
+
+# ============================================================================
+# STEP 6: CALCULATE VERIFICATION SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+    - "correlation"
+  
+  ensemble: []
+  
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP FOR STATISTICAL SIGNIFICANCE
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 100
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_test_iwkn_vs_iqwf_hybrid"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT RESULTS
+# ============================================================================
+plot:
+  enabled: true
+  create_heatmap: true
+  create_summary: true
+  dpi: 300
+  format: "png"

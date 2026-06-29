@@ -1,0 +1,143 @@
+# ============================================================================
+# Ensemble DATASET-CLIM: tp24 — 99th percentile of aggregated obs per condition
+# ============================================================================
+# ifs_ens4hybrid (model1) vs hybrid_ens (model2)
+# Period: 2025-10-21 to 2026-03-29 (overlap of both models)
+# Steps: 24h to 240h (days 1–10)
+# Threshold: p99 computed from the pooled obs in each (season × orog) subset
+# Compare with: config_tp24_ens_local_p99obsclim_ifs4hybrid.yaml (per-station clim)
+# ============================================================================
+
+variable: "tp24"
+start_date: "2025-10-21"
+end_date: "2026-03-29"
+mode: "ensemble"
+steps: [24, 48, 72, 96, 120, 144, 168, 192, 216, 240]
+skip_extraction_if_exists: true
+skip_scoring_if_exists: false
+
+# ============================================================================
+# ENSEMBLE SETTINGS
+# ============================================================================
+ensemble:
+  n_members: 50
+  include_control: false
+
+# ============================================================================
+# STEP 1: READ DATA
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "ifs_ens4hybrid"
+    source: "local_grib"
+    unit_conversion_factor: 1000.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/precip/forecast_ENS/raw/ifs_ens4hybrid"
+
+  forecast_model2:
+    name: "hybrid_ens"
+    source: "local_grib"
+    unit_conversion_factor: 1000.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/precip/forecast_ENS/raw/hybrid_ens"
+
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# Reuse extraction from the local_obs_climatology run (same models/period)
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_ens_local_p99obsclim_ifs4hybrid"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["low", "mid", "high"]
+  orography_ranges:
+    low:  [0, 40]
+    mid:  [40, 120]
+    high: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: true
+  outlier_threshold_std: 5.0
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — p99 of pooled observations in each (season × orog) subset
+# ============================================================================
+threshold:
+  method: "dataset_climatology"
+  event_type: "above"
+  dataset_climatology:
+    percentile: 99
+    use_filtered_data: true
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  ensemble:
+    - "twCRPS"
+    - "fCRPS"
+    - "twMAE"
+    - "Brier"
+    - "BSS"
+    - "quantile_score"
+    - "extreme_spread_skill_ratio"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 100
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_ens_datasetclim_p99obs_ifs4hybrid"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 300
+  format: "png"

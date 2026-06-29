@@ -1,0 +1,148 @@
+# ============================================================================
+# Scorecards4Extremes — Example / starter configuration
+# ============================================================================
+# Copy this file, rename it, and edit the five fields marked with  ← CHANGE
+# Everything else is ready to run as-is.
+#
+# This example verifies 24 h precipitation (tp24) using a dataset-derived
+# threshold — no external climatology files required.
+# See docs/USER_GUIDE.md for all available options.
+# ============================================================================
+
+variable: "tp24"          # tp24 | 2t | 10ff
+start_date: "2024-01-01"  # ← CHANGE: inclusive, YYYY-MM-DD
+end_date:   "2024-03-31"  # ← CHANGE: keep short for a first test run
+mode: "deterministic"
+forecast_days: [1, 2, 3, 4, 5]   # forecast lead-time days to include
+lead_time_frequency: 24            # 24 h daily steps for tp24
+skip_extraction_if_exists: true    # skip Step 3 on re-runs if parquet files exist
+skip_scoring_if_exists:    false
+
+# ============================================================================
+# STEP 1: READ DATA
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "model_A"                # ← CHANGE: short label (used in plots)
+    source: "local_grib"           # local_grib | quaver (quaver: ECMWF only)
+    unit_conversion_factor: 1000.0 # m → mm for tp24
+    local_grib:
+      path: "/data/forecasts/model_A"  # ← CHANGE: path to GRIB files
+
+  forecast_model2:
+    name: "model_B"                # ← CHANGE: short label
+    source: "local_grib"
+    unit_conversion_factor: 1000.0
+    local_grib:
+      path: "/data/forecasts/model_B"  # ← CHANGE: path to GRIB files
+
+  observation_source: "local_gpt"  # local_gpt | quaver (quaver: ECMWF only)
+  local_gpt:
+    path: "/data/observations"         # ← CHANGE: path to .gpt obs files
+                                       # See docs/USER_GUIDE.md §13 for format
+
+# ============================================================================
+# STEP 2: PRE-PROCESS
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false  # true for 10ff
+  lapse_rate_correction: false       # true for 2t
+  precipitation_accumulation_hours: 24  # 24 for tp24; null otherwise
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/my_run"  # where to cache parquet files
+  save_format: "pandas"
+  area: "europe"   # geographic filter applied during extraction
+
+# ============================================================================
+# AUXILIARY FIELDS (required for lapse-rate correction and terrain filter)
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/data/aux/lsm_model_A.grib"   # land-sea mask GRIB
+    orog_path: "/data/aux/orog_model_A.grib"   # model orography GRIB
+  model2:
+    lsm_path:  "/data/aux/lsm_model_B.grib"
+    orog_path: "/data/aux/orog_model_B.grib"
+  sdfor_path:  "/data/aux/sdfor.grib"          # sub-grid std dev of orography
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null            # null = all; or e.g. [24, 48, 72]
+  season: null                # null = all; or ["DJF", "MAM", "JJA", "SON"]
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: false
+  outlier_threshold_std: 5.0
+  max_valid_precipitation: 800.0  # QC ceiling for tp24 (mm)
+  min_valid_temperature: -60.0    # QC range for 2t (°C) — ignored for tp24
+  max_valid_temperature:  60.0
+
+# ============================================================================
+# STEP 5: THRESHOLD
+# ============================================================================
+# dataset_climatology: uses the Nth percentile of the observations already
+# in your dataset. No external files needed — ideal for first runs.
+#
+# For production runs, local_obs_climatology gives more stable per-station
+# thresholds but requires pre-built climatology files (ECMWF users: see §11
+# of the User Guide; external users: stick with dataset_climatology).
+threshold:
+  method: "dataset_climatology"
+  event_type: "above"           # above = heavy precip; below = cold extremes
+  dataset_climatology:
+    percentile: 99
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+    - "correlation"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200          # 200 is fast; use 1000 for publication-quality runs
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE
+# ============================================================================
+save:
+  output_directory: "./results/my_run"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  enabled: true
+  create_heatmap: true
+  heatmap_style: "smooth"
+  dpi: 150
+  format: "png"

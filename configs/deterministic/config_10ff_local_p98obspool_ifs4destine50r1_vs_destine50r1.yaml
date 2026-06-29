@@ -1,0 +1,137 @@
+# ============================================================================
+# Local pipeline: 10ff — pooled dataset 98th percentile (strong winds)
+# ============================================================================
+# ifs4destine50r1 (model1) vs destine50r1 (model2)
+# Period: 2025-08-01 to 2026-02-28
+# Forecast days: 1–5, no season split (full period together)
+# Threshold: pooled 98th percentile computed from the filtered dataset
+# Wind speed computed from U/V components
+# ============================================================================
+
+variable: "10ff"
+start_date: "2025-08-01"
+end_date: "2026-02-28"
+mode: "deterministic"
+forecast_days: [1, 2, 3, 4, 5]
+lead_time_frequency: 6
+skip_extraction_if_exists: true
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA (local GRIB)
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "ifs4destine50r1"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/10wind_speed/forecast/raw/ifs4destine50r1"
+
+  forecast_model2:
+    name: "destine50r1"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/10wind_speed/forecast/raw/destine50r1"
+
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/10wind_speed/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: true
+  lapse_rate_correction: false
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/10ff_local_p98obsclim_ifs4destine50r1_vs_destine50r1"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco2559.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/destine_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: false
+  coastal_lsm_threshold: 0.9
+  remove_outliers: false
+  outlier_threshold_std: 5.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — pooled 98th percentile from the filtered dataset
+# ============================================================================
+threshold:
+  method: "dataset_climatology"
+  event_type: "above"
+  dataset_climatology:
+    percentile: 98
+    use_filtered_data: true
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 1000
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/10ff_local_p98obspool_ifs4destine50r1_vs_destine50r1"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 300
+  format: "png"

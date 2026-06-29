@@ -1,0 +1,48 @@
+# ── Python artefacts ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── SLURM job output logs ──────────────────────────────────────────────────────
+scorecards_*.out
+scorecards_*.err
+diagnose_*.out
+diagnose_*.err
+*.slurm.out
+*.slurm.err
+
+# ── User-generated output (results, extracted points, plots) ──────────────────
+results/
+extracted_points/
+plots/
+case_study_output/
+
+# ── Internal / non-public folders ─────────────────────────────────────────────
+_archive/
+test_quaver/
+
+# ── Temporary files ────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+_tmp/
+.DS_Store
+Thumbs.db
+
+# ── Editor / IDE ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
