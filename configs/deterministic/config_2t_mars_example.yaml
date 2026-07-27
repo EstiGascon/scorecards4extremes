@@ -1,0 +1,153 @@
+# ============================================================================
+# EXAMPLE: direct MARS + STVL retrieval (ECMWF only)
+# ============================================================================
+# Demonstrates source: "mars" (forecasts) and observation_source: "stvl" (obs):
+# the tool retrieves everything it needs itself — no external retrieval scripts.
+# Keep the date range short for a first test run.
+#
+# Storage folders are derived from the MARS keys, so they always match the expver
+# retrieved:  {base_path}/{class}_{stream}_{expver}
+#   model1 -> .../forecast/raw/od_oper_0001
+#   model2 -> .../forecast/raw/ai_oper_0001
+# ============================================================================
+
+variable: "2t"
+start_date: "2026-01-01"
+end_date: "2026-01-03"
+mode: "deterministic"
+forecast_days: [1, 3, 5]
+lead_time_frequency: 6
+skip_extraction_if_exists: false
+skip_scoring_if_exists: true
+
+# ============================================================================
+# STEP 1: READ DATA — retrieve directly from MARS (forecasts) + STVL (obs)
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "ifs_oper"
+    source: "mars"
+    unit_conversion_factor: 1.0
+    mars:
+      class: od
+      type: fc
+      stream: oper
+      expver: "0001"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw"
+
+  forecast_model2:
+    name: "aifs1.0_oper"
+    source: "mars"
+    unit_conversion_factor: 1.0
+    mars:
+      class: ai
+      type: fc
+      stream: oper
+      expver: "0001"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw"
+
+  observation_source: "stvl"
+  stvl:
+    sources: ["synop"]
+    base_path: "/ec/vol/destine/continuous_evaluation/2mtemp/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: true
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/2t_mars_example"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco2559.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/destine_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/aifs_lsm.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/aifs_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: false
+  outlier_threshold_std: 5.0
+  min_valid_temperature: -60.0
+  max_valid_temperature: 60.0
+
+# ============================================================================
+# STEP 5: THRESHOLD
+# ============================================================================
+threshold:
+  method: "dataset_climatology"
+  event_type: "above"
+  dataset_climatology:
+    percentile: 95
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/2t_mars_example"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 150
+  format: "png"

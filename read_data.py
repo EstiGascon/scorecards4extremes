@@ -9,8 +9,10 @@ Options:
 from pathlib import Path
 from datetime import datetime, timedelta
 
+from utils import compute_steps as _compute_steps
 
-def _resolve_forecast_source(cfg_model, model_label):
+
+def _resolve_forecast_source(cfg_model, model_label, config):
     """Resolve a single forecast model source, return (path_or_None, name, source)."""
     name = cfg_model['name']
     source = cfg_model['source']
@@ -23,6 +25,24 @@ def _resolve_forecast_source(cfg_model, model_label):
         if not Path(path).exists():
             raise FileNotFoundError(f"{model_label} path not found: {path}")
         return path, name, source
+
+    elif source == 'mars':
+        # Retrieve forecast GRIB now, then treat as local_grib downstream.
+        import mars_retrieve
+        mars_cfg = cfg_model['mars']
+        steps, _ = _compute_steps(config)
+        print(f"  MARS class={mars_cfg.get('class')}, type={mars_cfg.get('type')}, "
+              f"stream={mars_cfg.get('stream')}, expver={mars_cfg.get('expver')}")
+        target_dir = mars_retrieve.retrieve_forecast(
+            mars_cfg,
+            variable=config['variable'],
+            start_date=config['start_date'],
+            end_date=config['end_date'],
+            steps=steps,
+            mode=config.get('mode', 'deterministic'),
+        )
+        # Return as local_grib so all downstream extraction is unchanged
+        return str(target_dir), name, 'local_grib'
 
     elif source == 'quaver':
         q = cfg_model.get('quaver', {})
@@ -50,11 +70,11 @@ def run_step1(config):
     
     # Read forecast model 1
     print("\nForecast Model 1:")
-    fc1_path, fc1_name, fc1_source = _resolve_forecast_source(cfg['forecast_model1'], "Forecast model 1")
-    
+    fc1_path, fc1_name, fc1_source = _resolve_forecast_source(cfg['forecast_model1'], "Forecast model 1", config)
+
     # Read forecast model 2
     print("\nForecast Model 2:")
-    fc2_path, fc2_name, fc2_source = _resolve_forecast_source(cfg['forecast_model2'], "Forecast model 2")
+    fc2_path, fc2_name, fc2_source = _resolve_forecast_source(cfg['forecast_model2'], "Forecast model 2", config)
     
     # Read observation data
     print("\nObservation data:")
@@ -66,6 +86,24 @@ def run_step1(config):
         print(f"  Path: {obs_path}")
         if not Path(obs_path).exists():
             raise FileNotFoundError(f"Observation path not found: {obs_path}")
+
+    elif obs_source == 'stvl':
+        # Retrieve observations from STVL now, then treat as local_gpt downstream.
+        import mars_retrieve
+        stvl_cfg = cfg['stvl']
+        steps, _ = _compute_steps(config)
+        base_time = cfg.get('forecast_model1', {}).get('mars', {}).get('time', '00')
+        print(f"  STVL sources: {stvl_cfg.get('sources', ['synop'])}")
+        obs_dir = mars_retrieve.retrieve_obs(
+            stvl_cfg,
+            variable=config['variable'],
+            start_date=config['start_date'],
+            end_date=config['end_date'],
+            steps=steps,
+            base_time=base_time,
+        )
+        obs_path = str(obs_dir)
+        obs_source = 'local_gpt'  # downstream reads the materialised .geo files
 
     elif obs_source == 'quaver':
         obs_path = None  # Will be retrieved via STVL at extraction time

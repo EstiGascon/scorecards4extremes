@@ -130,10 +130,11 @@ skip_scoring_if_exists:    false  # skip step 6 if score CSV already exists
 read_data:
   forecast_model1:
     name: "model_A"           # label used in filenames and plots
-    source: "local_grib"      # local_grib | quaver
+    source: "local_grib"      # local_grib | mars | quaver   (mars/quaver: ECMWF only)
     unit_conversion_factor: 1000.0   # applied to GRIB values (e.g. m→mm for tp)
     local_grib:
       path: "/path/to/model_A/grib"
+    # For source: "mars" instead, provide a `mars:` block (see §4 Step 1 — Direct retrieval)
 
   forecast_model2:
     name: "model_B"
@@ -142,9 +143,10 @@ read_data:
     local_grib:
       path: "/path/to/model_B/grib"
 
-  observation_source: "local_gpt"   # local_gpt | quaver
+  observation_source: "local_gpt"   # local_gpt | stvl | quaver   (stvl/quaver: ECMWF only)
   local_gpt:
     path: "/path/to/obs/gpt_files"
+  # For observation_source: "stvl" instead, provide a `stvl:` block (see §4 Step 1)
 
 # ── STEP 2: Pre-process ─────────────────────────────────────────────────────
 preprocess:
@@ -272,6 +274,81 @@ For `local_gpt` observations:
 - 2t: `2t_obs_YYYYMMDD00.geo` or `2t_YYYYMMDD.gpt`
 - tp24: `tp24_obs_YYYYMMDD00.geo` or `tp24_YYYYMMDD.gpt`
 - 10ff: `10ff_obs_YYYYMMDD00.geo` or `10ff_YYYYMMDD.gpt`
+
+#### Direct retrieval — `source: "mars"` and `observation_source: "stvl"` *(ECMWF only)*
+
+Instead of pointing at pre-retrieved files, a config can ask the tool to fetch the
+data it needs itself, so no external retrieval script is required. This runs inline
+as the first thing in Step 1 (on a compute node where the `mars` CLI and the
+ECMWF-internal `vtb` package are available), then the pipeline proceeds exactly as
+for local files. Only the steps the config actually needs are retrieved
+(derived from `forecast_days` × `lead_time_frequency`), and retrieval is idempotent
+— existing files are skipped, partial files from a failed retrieval are deleted.
+
+**Forecasts (`source: "mars"`)** — replace the `local_grib` block with a `mars` block:
+
+```yaml
+forecast_model1:
+  name: "j5vo"
+  source: "mars"
+  unit_conversion_factor: 1.0
+  mars:
+    class:  rd            # rd (research) | od (IFS oper) | ai (AIFS)
+    type:   fc            # fc for deterministic; ignored in ensemble mode (cf+pf auto)
+    stream: oper          # oper | enfo   (auto enfo when mode: ensemble)
+    expver: "j5vo"
+    levtype: sfc          # default sfc
+    time:   "00"          # base cycle, default 00
+    database: fdb         # optional (research/fdb data)
+    grid: "0.25/0.25"     # optional regrid
+    base_path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw"
+```
+
+The data is stored in a folder **derived from the MARS identity keys**:
+`{base_path}/{class}_{stream}_{expver}` (e.g. `.../raw/rd_oper_j5vo`,
+`.../raw/od_enfo_0001`). Because the folder name is built from the same keys used to
+retrieve, **the folder can never disagree with the expver retrieved** — this removes
+the long-standing footgun of a hand-named folder not matching its contents. `param` is
+derived from `variable` (`2t`→`2t`, `10ff`→`10u`+`10v`, `tp24`→`tp`); files are written
+with the standard names the extractor reads (`2t_YYYYMMDD.grib`, etc.). For
+`mode: ensemble` the control and 50 perturbed (`pf`) members are retrieved
+together. `base_path` must not be under `$HOME` (small quota) — use `/ec/vol/...`,
+`$SCRATCH`, or `$HPCPERM`.
+
+> **ENS control after IFS Cycle 50r1 (12 May 2026):** for the *operational* IFS
+> (`class: od`), the ensemble control forecast is no longer archived as
+> `stream=enfo, type=cf` — from 12 May 2026 it lives in `stream=oper, type=fc`.
+> The retriever handles this automatically **per day** (so a date range spanning
+> the boundary works): operational `od` control uses `oper/fc` on/after 12 May 2026
+> and `enfo/cf` before; AIFS (`class: ai`) and research (`class: rd`) keep `enfo/cf`;
+> perturbed members are always `enfo/pf`. The ensemble extractor treats a `type=fc`
+> control field as member 0, same as `cf`.
+
+**Observations (`observation_source: "stvl"`)** — replace `local_gpt` with:
+
+```yaml
+observation_source: "stvl"
+stvl:
+  sources: ["synop"]
+  base_path: "/ec/vol/destine/continuous_evaluation/2mtemp/obs/raw"
+```
+
+Observations are pulled from STVL (`vtb.media.stvl_retrieve`) for every forecast valid
+time and written as Metview geopoints `{variable}_obs_YYYYMMDDHH.geo` into `base_path`
+(the exact convention the extractor reads). The STVL parameter is derived from `variable`
+(`tp24` uses `tp` with a 24 h period).
+
+> **No special submission needed.** `vtb` is a compiled extension tied to the ECMWF
+> `python3` module and is not importable from the project's `.venv`. The tool handles
+> this automatically: the STVL step runs in-process if `vtb` is importable, otherwise it
+> is run once in a subprocess under a vtb-capable Python (resolved via `module load
+> python3`, or `$S4E_VTB_PYTHON` if set). So a `stvl` config runs unchanged via
+> `sbatch submit_job.sh` — no need to switch the whole pipeline off the `.venv`.
+> Forecast (`mars`) retrieval only needs the `mars` CLI and never `vtb`.
+
+> External (non-ECMWF) users cannot use `mars`/`stvl` (no MARS/STVL access) — keep
+> `local_grib` / `local_gpt` and pre-retrieve, or use `dataset_climatology`. The tool
+> raises a clear error if `mars`/`vtb` are unavailable.
 
 ### Step 2 — Pre-process
 

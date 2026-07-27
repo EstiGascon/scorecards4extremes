@@ -24,10 +24,25 @@ skip_scoring_if_exists:    false
 read_data:
   forecast_model1:
     name: "model_A"                # ← CHANGE: short label (used in plots)
-    source: "local_grib"           # local_grib | quaver (quaver: ECMWF only)
+    source: "local_grib"           # local_grib | mars | quaver   (mars/quaver: ECMWF only)
     unit_conversion_factor: 1000.0 # m → mm for tp24
     local_grib:
       path: "/data/forecasts/model_A"  # ← CHANGE: path to GRIB files
+    # --- source: "mars" (ECMWF only) — retrieve forecast GRIB directly ------------
+    # Instead of local_grib, set source: mars and provide the MARS keys below. The
+    # tool retrieves exactly the steps this config needs into a folder DERIVED from
+    # the keys ({base_path}/{class}_{stream}_{expver}), so the folder always matches
+    # the expver retrieved. param is derived from `variable`; step from forecast_days.
+    # mars:
+    #   class:  rd            # rd (research) | od (IFS oper) | ai (AIFS)
+    #   type:   fc            # fc for deterministic (ignored in ensemble mode)
+    #   stream: oper          # oper | enfo (auto enfo in ensemble mode)
+    #   expver: "j5vo"
+    #   levtype: sfc          # default sfc
+    #   time:   "00"          # base cycle, default 00
+    #   database: fdb         # optional (research/fdb data)
+    #   grid: "0.25/0.25"     # optional regrid
+    #   base_path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw"
 
   forecast_model2:
     name: "model_B"                # ← CHANGE: short label
@@ -36,10 +51,17 @@ read_data:
     local_grib:
       path: "/data/forecasts/model_B"  # ← CHANGE: path to GRIB files
 
-  observation_source: "local_gpt"  # local_gpt | quaver (quaver: ECMWF only)
+  observation_source: "local_gpt"  # local_gpt | stvl | quaver   (stvl/quaver: ECMWF only)
   local_gpt:
     path: "/data/observations"         # ← CHANGE: path to .gpt obs files
                                        # See docs/USER_GUIDE.md §13 for format
+  # --- observation_source: "stvl" (ECMWF only) — retrieve obs directly from STVL ---
+  # Set observation_source: stvl and provide the block below. The tool retrieves obs
+  # for every forecast valid time and writes {variable}_obs_YYYYMMDDHH.geo into
+  # base_path (never under $HOME). parameter is derived from `variable`.
+  # stvl:
+  #   sources: ["synop"]
+  #   base_path: "/ec/vol/destine/continuous_evaluation/2mtemp/obs/raw"
 
 # ============================================================================
 # STEP 2: PRE-PROCESS

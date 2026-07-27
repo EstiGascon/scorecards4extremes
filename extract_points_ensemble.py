@@ -58,7 +58,9 @@ def _extract_raw_members_at_step(grib_data, step, obs_lats, obs_lons,
             fnum = int(mv.grib_get_long(step_fields[i], 'number'))
         except Exception:
             continue
-        if ftype == 'cf':
+        # Control member is 'cf' (enfo stream) or, for operational IFS from IFS
+        # Cycle 50r1 (12 May 2026) onwards, 'fc' (oper stream). Both map to member 0.
+        if ftype in ('cf', 'fc'):
             member_map[0] = i
         else:
             member_map[fnum] = i

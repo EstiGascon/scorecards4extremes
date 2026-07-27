@@ -10,6 +10,7 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime, timedelta
 from utils import format_threshold_string as _format_threshold_string
+from utils import compute_steps as _compute_steps
 
 
 def get_area_bbox(area_config):
@@ -222,25 +223,53 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                     print(f"    ✗ Missing {fc2_name} GRIB")
             
             elif variable == '10ff':
-                # Model 1 - wind components
+                # Clear wind component locals from previous date to avoid stale data
+                fc1_u_grib = None
+                fc1_v_grib = None
+                fc2_u_grib = None
+                fc2_v_grib = None
+
+                # Model 1 - wind components (separate 10u/10v or combined 10uv)
                 fc1_u_file = fc1_path / f"10u_{date_str}.grib"
                 fc1_v_file = fc1_path / f"10v_{date_str}.grib"
-                if fc1_u_file.exists() and fc1_v_file.exists():
-                    fc1_u_grib = mv.read(str(fc1_u_file))
-                    fc1_v_grib = mv.read(str(fc1_v_file))
-                    print(f"    ✓ Loaded {fc1_name} wind components")
-                else:
-                    print(f"    ✗ Missing {fc1_name} wind components")
-                
-                # Model 2 - wind components
+                fc1_uv_file = fc1_path / f"10uv_{date_str}.grib"
+                try:
+                    if fc1_u_file.exists() and fc1_v_file.exists():
+                        fc1_u_grib = mv.read(str(fc1_u_file))
+                        fc1_v_grib = mv.read(str(fc1_v_file))
+                        print(f"    ✓ Loaded {fc1_name} wind components")
+                    elif fc1_uv_file.exists():
+                        fc1_uv_grib = mv.read(str(fc1_uv_file))
+                        fc1_u_grib = mv.select(fc1_uv_grib, shortName='10u')
+                        fc1_v_grib = mv.select(fc1_uv_grib, shortName='10v')
+                        print(f"    ✓ Loaded {fc1_name} wind components (combined 10uv)")
+                    else:
+                        print(f"    ✗ Missing {fc1_name} wind components")
+                except Exception as e:
+                    print(f"    ✗ Failed to load {fc1_name} wind components: {e}")
+                    fc1_u_grib = None
+                    fc1_v_grib = None
+
+                # Model 2 - wind components (separate 10u/10v or combined 10uv)
                 fc2_u_file = fc2_path / f"10u_{date_str}.grib"
                 fc2_v_file = fc2_path / f"10v_{date_str}.grib"
-                if fc2_u_file.exists() and fc2_v_file.exists():
-                    fc2_u_grib = mv.read(str(fc2_u_file))
-                    fc2_v_grib = mv.read(str(fc2_v_file))
-                    print(f"    ✓ Loaded {fc2_name} wind components")
-                else:
-                    print(f"    ✗ Missing {fc2_name} wind components")
+                fc2_uv_file = fc2_path / f"10uv_{date_str}.grib"
+                try:
+                    if fc2_u_file.exists() and fc2_v_file.exists():
+                        fc2_u_grib = mv.read(str(fc2_u_file))
+                        fc2_v_grib = mv.read(str(fc2_v_file))
+                        print(f"    ✓ Loaded {fc2_name} wind components")
+                    elif fc2_uv_file.exists():
+                        fc2_uv_grib = mv.read(str(fc2_uv_file))
+                        fc2_u_grib = mv.select(fc2_uv_grib, shortName='10u')
+                        fc2_v_grib = mv.select(fc2_uv_grib, shortName='10v')
+                        print(f"    ✓ Loaded {fc2_name} wind components (combined 10uv)")
+                    else:
+                        print(f"    ✗ Missing {fc2_name} wind components")
+                except Exception as e:
+                    print(f"    ✗ Failed to load {fc2_name} wind components: {e}")
+                    fc2_u_grib = None
+                    fc2_v_grib = None
             
             elif variable == 'tp24':
                 # Model 1 - try multiple naming patterns
@@ -305,12 +334,12 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                 
                 elif variable == '10ff':
                     # Use pre-loaded wind component GRIBs
-                    if 'fc1_u_grib' in locals() and 'fc1_v_grib' in locals():
+                    if fc1_u_grib is not None and fc1_v_grib is not None:
                         u1_step = mv.read(data=fc1_u_grib, step=step)
                         v1_step = mv.read(data=fc1_v_grib, step=step)
                         fc1_step = mv.sqrt(u1_step * u1_step + v1_step * v1_step)
                     
-                    if 'fc2_u_grib' in locals() and 'fc2_v_grib' in locals():
+                    if fc2_u_grib is not None and fc2_v_grib is not None:
                         u2_step = mv.read(data=fc2_u_grib, step=step)
                         v2_step = mv.read(data=fc2_v_grib, step=step)
                         fc2_step = mv.sqrt(u2_step * u2_step + v2_step * v2_step)
@@ -812,50 +841,15 @@ def run_step3(config, paths, preprocess_settings):
     
     print(f"\nOutput directory: {output_path}")
     
-    # Determine lead times from config
+    # Determine lead times from config (shared derivation — see utils.compute_steps)
+    steps, step_to_forecast_day = _compute_steps(config)
     if 'forecast_days' in config and config['forecast_days'] is not None:
-        # Use forecast days mode
-        forecast_days = config['forecast_days']
-        frequency = config.get('lead_time_frequency', 6)  # Default 6h
-        
-        steps = []
-        step_to_forecast_day = {}  # Map each step to its requested forecast day
-        
-        for day in forecast_days:
-            # Day 1 = 1-24h, Day 2 = 25-48h, etc. (matches: day = ((lt-1)//24)+1)
-            # Generate steps within each day
-            day_start = (day - 1) * 24 + 1  # 1, 25, 49, 73, 97, ...
-            day_end = day * 24 + 1          # 25, 49, 73, 97, 121, ... (exclusive)
-            
-            # Generate steps at specified frequency within the day
-            # Example: Day 1, freq=6 → [1, 7, 13, 19] or with offset [6, 12, 18, 24]
-            # Adjust start to align with frequency (e.g., start at 6 for freq=6)
-            if frequency > 1:
-                offset = frequency - (day_start % frequency) if (day_start % frequency) != 0 else 0
-                day_start += offset
-            day_steps = list(range(day_start, day_end, frequency))
-            
-            # Add steps and map to forecast day
-            for step in day_steps:
-                if step not in steps:
-                    steps.append(step)
-                    step_to_forecast_day[step] = day  # Map step to its forecast day
-        
-        # Remove step 0 for precipitation variables (need 24h accumulation)
-        if config['variable'] in ['tp24', 'tp'] and 0 in steps:
-            steps.remove(0)
-            if 0 in step_to_forecast_day:
-                del step_to_forecast_day[0]
-        
-        steps = sorted(steps)
-        print(f"Lead time mode: Forecast days {forecast_days} with {frequency}h frequency")
+        print(f"Lead time mode: Forecast days {config['forecast_days']} with "
+              f"{config.get('lead_time_frequency', 6)}h frequency")
         print(f"Computed steps: {steps}")
-        
         # Store mapping for later use
         config['_step_to_forecast_day'] = step_to_forecast_day
     else:
-        # Use explicit steps
-        steps = config['steps']
         print(f"Lead time mode: Explicit steps {steps}")
     
     # Note: area filtering happens in step 4, not during extraction
