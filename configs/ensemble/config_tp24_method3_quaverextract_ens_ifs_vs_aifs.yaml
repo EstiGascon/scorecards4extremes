@@ -1,0 +1,171 @@
+# ============================================================================
+# ENSEMBLE — METHOD 3 of 3 — backend = quaver_extract (VTB MARS + STVL)
+# ============================================================================
+# tp24 heavy precipitation (>30 mm/24h), Europe. ENSEMBLE (50 perturbed +
+# control).
+# Evaluated model : IFS-ENS  (ifsens4aifs, class=od stream=enfo)  forecast_model1
+# Reference model : AIFS-ENS (aifs_ens,   class=ai stream=enfo)   forecast_model2
+#
+# These are the AIFS-ENS vs IFS-ENS pair recently used in this tool. MARS ENS
+# data is 6-hourly; AIFS requires the `model: aifs-ens` key.
+#
+# Validation window: 2 weeks of the AIFS/IFS common period (extend end_date to
+# 2026-03-05 for the full comparison).
+#
+# Extraction: STEP-1-ONLY quaver/VTB ensemble extraction —
+#   * ENS forecasts retrieved fresh from MARS (control + 50 perturbed, native
+#     grid); quaver_extract automatically retrieves the (step - 24h) support
+#     steps needed to de-accumulate tp24 from the raw cumulative `tp` field
+#   * observations retrieved fresh from STVL (vtb.media.stvl_retrieve, 24h period)
+#   * each member interpolated to stations with Fieldset.aligned()
+#   * output schema fc{1,2}_member_0..50 (member 0 = control) — matches the local
+#     ensemble extractor, so threshold/filter/scores/plot are unchanged.
+#
+# Run on Atos with the vtb-capable venv (see submit_job_quaver.sh):
+#     python run.py configs/ensemble/config_tp24_method3_quaverextract_ens_ifs_vs_aifs.yaml
+# ============================================================================
+
+variable: "tp24"
+start_date: "2025-11-03"
+end_date: "2025-11-16"
+mode: "ensemble"
+backend: "quaver_extract"
+steps: [24, 48, 72, 96, 120]
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# ENSEMBLE SETTINGS
+# ============================================================================
+ensemble:
+  n_members: 50
+  include_control: true
+
+# ============================================================================
+# STEP 1: READ DATA — MARS identity keys used by the quaver/VTB retrieval
+# ============================================================================
+read_data:
+  forecast_model1:                       # IFS-ENS (reference)
+    name: "ifsens4aifs"
+    source: "quaver"
+    unit_conversion_factor: 1000.0       # m -> mm
+    quaver:
+      class: "od"
+      expver: "1"
+      stream: "enfo"
+      type: "pf"
+      number: "1/to/50"
+
+  forecast_model2:                       # AIFS-ENS (evaluated)
+    name: "aifs_ens"
+    source: "quaver"
+    unit_conversion_factor: 1.0          # AIFS tp already in kg m-2 (= mm)
+    quaver:
+      class: "ai"
+      expver: "1"
+      stream: "enfo"
+      type: "pf"
+      number: "1/to/50"
+      model: "aifs-ens"                  # AIFS requires the model key
+
+  observation_source: "quaver"
+  quaver_obs:
+    sources: ["synop", "hdobs"]
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_method3_quaverextract_ens_ifs_vs_aifs"
+  save_format: "pandas"
+  area: "europe"
+  interpolation_method: "nearest"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:                                # IFS-ENS
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:                                # AIFS-ENS
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/aifs_lsm.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/aifs_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["low", "mid", "high"]
+  orography_ranges:
+    low:  [0, 40]
+    mid:  [40, 120]
+    high: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: true
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — fixed 30 mm (heavy precip, above)
+# ============================================================================
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 30.0
+    event_type: "above"
+
+# ============================================================================
+# STEP 6: SCORES (ensemble)
+# ============================================================================
+scores:
+  ensemble:
+    - "twCRPS"
+    - "fCRPS"
+    - "Brier"
+    - "BSS"
+    - "tw_quantile_score"
+    - "tw_quantile_score_q090"
+    - "tw_quantile_score_q095"
+    - "tw_quantile_score_q099"
+    - "extreme_spread_skill_ratio"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_method3_quaverextract_ens_ifs_vs_aifs"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 300
+  format: "png"

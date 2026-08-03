@@ -1,0 +1,148 @@
+# ============================================================================
+# METHOD 1 of 3 — LOCAL GRIB + LOCAL .gpt observations
+# ============================================================================
+# 2t cold extremes (temperature < 0°C), January 2026, Europe.
+# Evaluated model : rd / expver=iekm   (forecast_model1)
+# Reference model : IFS deterministic operational (od / expver=0001) (forecast_model2)
+# Forecast days 1, 3, 5 · no season split · orography split only.
+#
+# Extraction method: backend=local — reads pre-retrieved local GRIB (native
+# model grid) and local .gpt observation files; nearest-gridpoint extraction.
+#
+# RESOLUTION NOTE: requested 3-hourly, but the LOCAL ifs_oper archive only has
+# 6-hourly steps staged (iekm has true 3-hourly locally). To keep this method
+# internally consistent (both models present at every requested step), this
+# config uses lead_time_frequency: 6 — the true common local resolution.
+# Methods 2 & 3 retrieve fresh from MARS/STVL and use lead_time_frequency: 3.
+# ============================================================================
+
+variable: "2t"
+start_date: "2026-01-01"
+end_date: "2026-01-31"
+mode: "deterministic"
+backend: "local"
+forecast_days: [1, 3, 5]
+lead_time_frequency: 6
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA — local GRIB (native grid) + local .gpt obs
+# ============================================================================
+read_data:
+  forecast_model1:                       # evaluated model
+    name: "iekm"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw/iekm"
+
+  forecast_model2:                       # reference model
+    name: "ifs_oper"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw/ifs_oper"
+
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/2mtemp/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: true
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/2t_method1_local_iekm_vs_ifs"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS (sdfor / lsm for orography & coastal filtering)
+# ============================================================================
+auxiliary_fields:
+  model1:                                # iekm
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco2559.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/destine_orog.grib"
+  model2:                                # ifs_oper
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — no season split, orography split only
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: false
+  min_valid_temperature: -60.0
+  max_valid_temperature: 60.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — fixed 0°C (cold extreme, below)
+# ============================================================================
+threshold:
+  method: "fixed"
+  event_type: "below"
+  fixed:
+    value: 0.0
+    event_type: "below"
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/2t_method1_local_iekm_vs_ifs"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 300
+  format: "png"

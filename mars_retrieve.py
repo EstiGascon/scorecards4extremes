@@ -142,6 +142,7 @@ def _build_mars_request(mars_cfg, param, date_str, steps, mode, target):
     database = mars_cfg.get('database')       # e.g. 'fdb' for research (rd) data
     grid = mars_cfg.get('grid')               # optional regrid, e.g. '0.25/0.25'
     number = mars_cfg.get('number', '1/to/50')
+    model = mars_cfg.get('model')             # AIFS requires model=aifs-ens (class=ai)
 
     def _block(stream, mars_type, include_number):
         lines = [
@@ -161,6 +162,9 @@ def _build_mars_request(mars_cfg, param, date_str, steps, mode, target):
             f"  levtype  = {levtype},",
             f"  param    = {param},",
         ]
+        # model is required for AIFS (class=ai): model=aifs-ens / aifs-single.
+        if model:
+            lines.append(f"  model    = {model},")
         if include_number:
             lines.append(f"  number   = {number},")
         if database:

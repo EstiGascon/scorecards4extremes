@@ -1,0 +1,160 @@
+# ============================================================================
+# METHOD 2 of 3 — direct MARS (forecast) + STVL (observations) retrieval
+# ============================================================================
+# tp24 (24h precipitation), January 2026, Europe, threshold: tp24 > 30 mm.
+# Evaluated model : rd / expver=iekm   (forecast_model1)
+# Reference model : IFS deterministic operational (od / expver=0001) (forecast_model2)
+# Forecast days 1, 3, 5 · no season split · orography split only.
+#
+# Extraction method: source=mars / observation_source=stvl. The tool retrieves
+# the forecasts (native model grid) and SYNOP obs itself, then runs the SAME
+# local nearest-gridpoint extractor.
+#
+# Storage folders are derived from the MARS keys: {base_path}/{class}_{stream}_{expver}
+#   model1 -> .../forecast/raw/rd_oper_iekm
+#   model2 -> .../forecast/raw/od_oper_0001
+# ============================================================================
+
+variable: "tp24"
+start_date: "2026-01-01"
+end_date: "2026-01-31"
+mode: "deterministic"
+backend: "local"
+forecast_days: [1, 3, 5]
+lead_time_frequency: 24
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA — retrieve from MARS (forecasts) + STVL (obs)
+# ============================================================================
+read_data:
+  forecast_model1:                       # evaluated model
+    name: "iekm"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: rd
+      type: fc
+      stream: oper
+      expver: "iekm"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+      # database: fdb                     # uncomment if the research expver needs FDB
+
+  forecast_model2:                       # reference model
+    name: "ifs_oper"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: od
+      type: fc
+      stream: oper
+      expver: "0001"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+
+  observation_source: "stvl"
+  stvl:
+    sources: ["synop", "hdobs"]
+    base_path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_method2_marsstvl_iekm_vs_ifs"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS (sdfor / lsm for orography & coastal filtering)
+# ============================================================================
+auxiliary_fields:
+  model1:                                # iekm
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco2559.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/destine_orog.grib"
+  model2:                                # ifs_oper
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — no season split, orography split only
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: true
+  min_valid_precipitation: 0.0
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — fixed 30 mm/24h (above)
+# ============================================================================
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 30.0
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_method2_marsstvl_iekm_vs_ifs"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 300
+  format: "png"

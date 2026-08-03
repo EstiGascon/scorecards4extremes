@@ -112,6 +112,14 @@ try:
 except ImportError:
     QUAVER_COMPUTE_AVAILABLE = False
 
+# Quaver/VTB extraction-only backend (optional - backend='quaver_extract')
+# Implements ONLY step 3 (point extraction -> parquet); scoring stays local.
+try:
+    import quaver_extract
+    QUAVER_EXTRACT_AVAILABLE = True
+except ImportError:
+    QUAVER_EXTRACT_AVAILABLE = False
+
 
 def load_config(config_file='config.yaml'):
     """Load configuration from YAML file"""
@@ -154,7 +162,11 @@ def print_config_summary(config):
     
     print(f"  Forecast Model 1: {config['read_data']['forecast_model1']['name']}")
     print(f"  Forecast Model 2: {config['read_data']['forecast_model2']['name']}")
-    print(f"  Observation source: {config['read_data']['observation_source']}")
+    # quaver_extract backend uses read_data.quaver_obs instead of observation_source
+    obs_src = config['read_data'].get('observation_source')
+    if obs_src is None and 'quaver_obs' in config['read_data']:
+        obs_src = "quaver (" + ", ".join(config['read_data']['quaver_obs'].get('sources', [])) + ")"
+    print(f"  Observation source: {obs_src}")
     print(f"  Threshold method: {config['threshold']['method']}")
     print(f"  Output: {config['save']['output_directory']}")
 
@@ -311,7 +323,11 @@ def main():
                 # ENSEMBLE WORKFLOW (Steps 3-9)
                 # ============================================================
                 backend = config.get('backend', 'local')
-                if not ENSEMBLE_AVAILABLE and backend != 'quaver' and backend != 'quaver_compute':
+                if backend == 'quaver_extract' and not QUAVER_EXTRACT_AVAILABLE:
+                    print("\nERROR: backend='quaver_extract' but quaver_extract.py not importable "
+                          "(check vtb/metview modules)")
+                    sys.exit(1)
+                if not ENSEMBLE_AVAILABLE and backend not in ('quaver', 'quaver_compute', 'quaver_extract'):
                     print("\nERROR: Ensemble extraction module not found (extract_points_ensemble.py)")
                     sys.exit(1)
                 if backend == 'quaver' and not QUAVER_AVAILABLE:
@@ -375,6 +391,8 @@ def main():
                     }
                 elif backend == 'quaver':
                     point_data_path = quaver_backend.extract_points_quaver(config, paths, preprocess_settings)
+                elif backend == 'quaver_extract':
+                    point_data_path = quaver_extract.run_step3_ensemble(config, paths, preprocess_settings)
                 else:
                     point_data_path = extract_points_ensemble.run_step3_ensemble(config, paths, preprocess_settings)
                 
@@ -695,7 +713,12 @@ def main():
             # DETERMINISTIC WORKFLOW (Steps 3-9) - original code below
             # ====================================================================
             backend = config.get('backend', 'local')
-            
+
+            if backend == 'quaver_extract' and not QUAVER_EXTRACT_AVAILABLE:
+                print("\nERROR: backend='quaver_extract' but quaver_extract.py not importable "
+                      "(check vtb/quaver modules, e.g. `module load quaver/3.6.4`)")
+                sys.exit(1)
+
             # --- Quaver Compute backend: use native compute() API ---
             if backend == 'quaver_compute':
                 if not QUAVER_COMPUTE_AVAILABLE:
@@ -724,14 +747,14 @@ def main():
             # STEP 3: EXTRACT POINT DATA
             # ====================================================================
             skip_extraction = config.get('skip_extraction_if_exists', False)
-            
+            variable = config['variable']
+            fc1_name = paths['fc1_name']
+            fc2_name = paths['fc2_name']
+
             if skip_extraction:
                 # Only check for existing files if skip is enabled
                 output_path = Path(config['extract_points']['output_path'])
-                variable = config['variable']
-                fc1_name = paths['fc1_name']
-                fc2_name = paths['fc2_name']
-                
+
                 # Extraction output has no threshold suffix — threshold is applied at scoring time
                 filename_base = f"{variable}_{fc1_name}_vs_{fc2_name}"
                 
@@ -768,6 +791,8 @@ def main():
                     config_partial['forecast_days'] = missing_days
                     if backend == 'quaver':
                         point_data_path = quaver_backend.extract_points_quaver(config_partial, paths, preprocess_settings)
+                    elif backend == 'quaver_extract':
+                        point_data_path = quaver_extract.run_step3(config_partial, paths, preprocess_settings)
                     else:
                         point_data_path = _get_extract_points().run_step3(config_partial, paths, preprocess_settings)
                     # Restore full forecast_days so scoring uses all days
@@ -776,12 +801,16 @@ def main():
                     # No files exist at all — full extraction
                     if backend == 'quaver':
                         point_data_path = quaver_backend.extract_points_quaver(config, paths, preprocess_settings)
+                    elif backend == 'quaver_extract':
+                        point_data_path = quaver_extract.run_step3(config, paths, preprocess_settings)
                     else:
                         point_data_path = _get_extract_points().run_step3(config, paths, preprocess_settings)
             else:
                 # Skip is disabled, always extract from scratch
                 if backend == 'quaver':
                     point_data_path = quaver_backend.extract_points_quaver(config, paths, preprocess_settings)
+                elif backend == 'quaver_extract':
+                    point_data_path = quaver_extract.run_step3(config, paths, preprocess_settings)
                 else:
                     point_data_path = _get_extract_points().run_step3(config, paths, preprocess_settings)
             
@@ -792,7 +821,7 @@ def main():
                 'fc1_name': paths['fc1_name'],
                 'fc2_name': paths['fc2_name']
             }
-            
+
             # Check if we should evaluate multiple orography types
             orog_config = config['filter'].get('orography_type', None)
             if isinstance(orog_config, list):
@@ -950,7 +979,8 @@ def main():
                         # distribution matches what the threshold represents.
                         # ====================================================================
                         if (config.get('threshold', {}).get('method') == 'fixed' and
-                                config.get('lead_time_frequency', 24) < 24):
+                                config.get('lead_time_frequency', 24) < 24 and
+                                not config.get('skip_daily_aggregation', False)):
                             data, threshold_value = _aggregate_to_daily_mean(data, threshold_value, model_names, config)
                             print("  ✓ Step 5b: aggregated sub-daily data to daily means (fixed threshold)")
 
