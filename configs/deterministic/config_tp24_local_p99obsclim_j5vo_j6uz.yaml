@@ -1,0 +1,145 @@
+# ============================================================================
+# Local pipeline: tp24 — per-station p99 obs climatology (heavy precipitation)
+# ============================================================================
+# j5vo (model1, reference) vs j6uz (model2)
+# Period: 2023-01-01 to 2023-06-30
+# Forecast days: 1–10, no season split (full period together)
+# Threshold: per-station p99 from local obs climatology
+# ============================================================================
+
+variable: "tp24"
+start_date: "2023-01-01"
+end_date:   "2023-06-30"
+mode: "deterministic"
+forecast_days: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+lead_time_frequency: 24
+skip_extraction_if_exists: true
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA (local GRIB)
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "j5vo"
+    source: "local_grib"
+    unit_conversion_factor: 1000.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw/j5vo"
+
+  forecast_model2:
+    name: "j6uz"
+    source: "local_grib"
+    unit_conversion_factor: 1000.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw/j6uz"
+
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "/perm/moeg/scorecards4extremes/extracted_points/tp24_local_fixed30_j5vo_j6uz"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: false
+  outlier_threshold_std: 5.0
+  min_valid_precipitation: 0.0
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station p99 obs climatology
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "tp"
+    percentile: 99
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 500
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_local_p99obsclim_j5vo_j6uz"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 300
+  format: "png"

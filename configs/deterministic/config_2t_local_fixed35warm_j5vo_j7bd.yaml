@@ -1,0 +1,142 @@
+# ============================================================================
+# Local pipeline: 2t — fixed threshold 35°C (extreme warm)
+# ============================================================================
+# j5vo (model1, reference) vs j7bd (model2)
+# Period: 2023-01-01 to 2023-06-30
+# Forecast days: 1–10, no season split (full period together)
+# Threshold: fixed 35°C, applied to every 6-h step as individual samples
+# Lapse-rate correction applied (2t in Celsius)
+# No coastal stations
+# ============================================================================
+
+variable: "2t"
+start_date: "2023-01-01"
+end_date: "2023-06-30"
+mode: "deterministic"
+forecast_days: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+lead_time_frequency: 6
+skip_daily_aggregation: true
+skip_extraction_if_exists: true
+skip_scoring_if_exists: true
+
+# ============================================================================
+# STEP 1: READ DATA (local GRIB)
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "j5vo"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw/j5vo"
+
+  forecast_model2:
+    name: "j7bd"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast/raw/j7bd"
+
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/2mtemp/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: true
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "/perm/moeg/scorecards4extremes/extracted_points/2t_local_fixed35warm_j5vo_j7bd"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: false
+  outlier_threshold_std: 5.0
+  min_valid_temperature: -60.0
+  max_valid_temperature: 60.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — fixed 35°C (extreme warm)
+# ============================================================================
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 35.0
+    event_type: "above"
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 500
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/2t_local_fixed35warm_j5vo_j7bd"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  create_heatmap: true
+  dpi: 300
+  format: "png"
