@@ -20,6 +20,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling _style module
+import _style
+
 # ============================================================================
 
 VARIABLE_LABELS = {
@@ -40,8 +43,9 @@ OROGRAPHY_RANGES = {
     "complex": (120, 3000), "high": (120, 3000),
 }
 
-COLOR_FC1 = "#1f77b4"
-COLOR_FC2 = "#d62728"
+# Shared colourblind-safe palette (see diagnostics/_style.py)
+COLOR_FC1 = _style.C_FC1   # model1 — blue
+COLOR_FC2 = _style.C_FC2   # model2 — vermillion
 
 
 def load_config(path):
@@ -299,6 +303,7 @@ def main():
     parser.add_argument("--dpi", type=int, default=150)
     args = parser.parse_args()
 
+    _style.apply_style(save_dpi=args.dpi)
     config = load_config(args.config)
     variable = config["variable"]
     var_label, unit = VARIABLE_LABELS.get(variable, (variable, ""))

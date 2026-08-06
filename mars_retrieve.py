@@ -104,6 +104,24 @@ def _resolve_target_dir(mars_cfg):
     return target_dir
 
 
+def _derive_obs_subdir(stvl_cfg):
+    """
+    Folder name derived from the STVL identity keys (sources list), so a fresh
+    STVL retrieval can NEVER collide with a pre-staged ``local_gpt`` directory
+    that happens to share the same ``base_path`` (e.g. both configs pointing at
+    the same '.../obs/raw' folder for a given variable). Without this, retrieve_obs
+    used ``base_path`` directly with no subdir, so if that folder already contained
+    pre-staged .geo files (put there for a local_gpt run), the skip-if-exists check
+    would find every target file already present and silently skip ALL retrieval
+    100% of the time — meaning 'method 2' (mars+stvl) ends up silently reading the
+    exact same pre-staged obs as 'method 1' (local) instead of ever calling STVL.
+    Confirmed 2026-08-04: this caused method1/method2 ensemble results for 10ff to
+    be byte-for-byte identical (md5-identical extracted parquet files).
+    """
+    sources = stvl_cfg.get('sources', ['synop'])
+    return "stvl_" + "_".join(sorted(str(s) for s in sources))
+
+
 def _date_range(start_date, end_date):
     """Inclusive daily range; accepts 'YYYY-MM-DD' or 'YYYYMMDD'."""
     fmt_in = '%Y-%m-%d' if '-' in str(start_date) else '%Y%m%d'
@@ -339,7 +357,7 @@ def retrieve_obs(stvl_cfg, variable, start_date, end_date, steps, base_time='00'
     base_path = stvl_cfg.get('base_path')
     if not base_path:
         raise ValueError("mars_retrieve: 'base_path' is required in the stvl config block")
-    target_dir = Path(_check_not_home(base_path))
+    target_dir = Path(_check_not_home(base_path)) / _derive_obs_subdir(stvl_cfg)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     payload = dict(stvl_cfg=stvl_cfg, variable=variable, start_date=start_date,
@@ -376,7 +394,7 @@ def _retrieve_obs_inproc(stvl_cfg, variable, start_date, end_date, steps, base_t
     base_path = stvl_cfg.get('base_path')
     if not base_path:
         raise ValueError("mars_retrieve: 'base_path' is required in the stvl config block")
-    target_dir = Path(_check_not_home(base_path))
+    target_dir = Path(_check_not_home(base_path)) / _derive_obs_subdir(stvl_cfg)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     sources = stvl_cfg.get('sources', ['synop'])

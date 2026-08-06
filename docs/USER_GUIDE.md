@@ -74,7 +74,7 @@ scorecards4extremes/
 ├── plot.py                         ← Step 9: Draw heatmap scorecards
 │
 ├── diagnostics/                    ← Standalone diagnostic and visualisation tools
-│   ├── diagnose_extremes.py        ← Comprehensive single-condition diagnostic (21 plots)
+│   ├── diagnose_extremes.py        ← Comprehensive single-condition diagnostic (22 plots)
 │   ├── diagnose_det_extremes_simple.py ← Quick 3-panel deterministic diagnostic
 │   ├── diagnose_twcrps_simple.py   ← Quick 3-panel ensemble diagnostic
 │   ├── plot_qq_extremes.py         ← Q-Q plot with warm + cold zoom panels
@@ -251,11 +251,12 @@ save:
 
 # ── STEP 9: Plot ──────────────────────────────────────────────────────────
 plot:
-  heatmap_style: "smooth"
-  enabled: true
-  create_heatmap: true
-  dpi: 300
-  format: "png"
+  enabled: true            # master switch (false = skip all plotting)
+  heatmap_style: "smooth"  # "smooth" or "normal"
+  create_summary: true     # also draw the multi-panel summary figure
+  dpi: 300                 # output resolution (dots per inch)
+  format: "png"            # png | pdf | svg
+  # forecast_days: [1, 3, 5]  # optional: restrict heatmaps to these lead days
 ```
 
 ---
@@ -334,9 +335,26 @@ stvl:
 ```
 
 Observations are pulled from STVL (`vtb.media.stvl_retrieve`) for every forecast valid
-time and written as Metview geopoints `{variable}_obs_YYYYMMDDHH.geo` into `base_path`
-(the exact convention the extractor reads). The STVL parameter is derived from `variable`
-(`tp24` uses `tp` with a 24 h period).
+time and written as Metview geopoints `{variable}_obs_YYYYMMDDHH.geo`. They are written
+into an **identity-derived sub-folder** of `base_path`, named `stvl_{sorted_sources}`
+(e.g. `.../obs/raw/stvl_synop`, `.../obs/raw/stvl_hdobs_synop`). This mirrors the
+identity-folder scheme used for MARS forecasts and, crucially, **keeps STVL obs separate
+from any pre-staged `local_gpt` observations that may already live directly under
+`base_path`**. Without the sub-folder the two write the same `{variable}_obs_*.geo`
+names, so with `skip_extraction_if_exists`/skip-if-present logic a `stvl` run would
+silently reuse whichever obs happened to be there first (this was a real bug where a
+`mars`+`stvl` run produced byte-identical results to a `local_gpt` run). The STVL
+parameter is derived from `variable` (`tp24` uses `tp` with a 24 h period).
+
+> **One retrieval call per valid time.** STVL obs are fetched with a *separate*
+> `stvl_retrieve()` call per valid time (`date=[single_vdt]`) rather than by passing the
+> whole date list at once. Batching a date list into one call makes `vtb` build one
+> `Fieldset` per date and then run them through `Fieldset.aligned_fieldsets()`, which
+> cross-matches stations by `[stationID, lat, lon]` proximity *across dates* and merges
+> them — subtly changing the station population versus single-date calls. Retrieving one
+> date at a time avoids that cross-date merging and keeps the obs set identical to the
+> reference `local_gpt` / MARS+STVL path. (The same one-date-per-call scheme is applied
+> in the in-memory `quaver_extract` backend, so all three retrieval paths agree.)
 
 > **No special submission needed.** `vtb` is a compiled extension tied to the ECMWF
 > `python3` module and is not importable from the project's `.venv`. The tool handles
@@ -352,7 +370,7 @@ time and written as Metview geopoints `{variable}_obs_YYYYMMDDHH.geo` into `base
 
 ### Step 2 — Pre-process
 
-- **Lapse-rate correction** (2t only): adjusts forecast 2t values to station elevation using `correction = lapse_rate × (station_height − model_height)`. Applied per member in ensemble mode.
+- **Lapse-rate correction** (2t only): adjusts forecast 2t values to station elevation using `correction = lapse_rate × (station_height − model_height)`. Applied per member in ensemble mode. Enabled with `lapse_rate_correction: true`; setting it `false` disables the correction consistently in both deterministic and ensemble modes. Stations with an unrealistic correction (> 50 °C) or elevation mismatch (> 10000 m) are dropped as a quality safeguard, identically across all extraction backends.
 - **Unit conversion**: `unit_conversion_factor` multiplied into GRIB values (e.g. 1000.0 converts m → mm for precipitation).
 - **24 h accumulation** (tp24): `tp[step] − tp[step−24]` applied when `precipitation_accumulation_hours: 24`.
 - **Wind speed** (10ff): computed as `sqrt(u² + v²)` per member.
@@ -406,9 +424,42 @@ scores_JJA_flat.csv
 ...
 ```
 
+> **Give every experiment its own `output_directory`.** The per-score CSV names encode
+> the threshold (via `_format_threshold_string()`), but the **heatmap PNGs and
+> `observation_counts` files do not** — they are keyed only by `(season, orography)`. So
+> two configs that differ *only* in threshold (e.g. a `fixed35` run and a `p99` run) but
+> share one `output_directory` will silently **overwrite each other's heatmaps and count
+> files** while leaving both sets of CSVs intact — an easy way to end up with a heatmap
+> that doesn't match its CSV. Point each config at a dedicated folder (encode the model
+> pair and threshold in the path, e.g. `results/2t_local_fixed35_ifs_oper_aifs1.0_oper`).
+
 ### Step 9 — Plot
 
-Draws a 4-panel heatmap scorecard (`smooth` style):
+Draws heatmap scorecards from the scores computed in Step 6. The colouring shows the **relative % difference** of model 1 vs model 2 for every (lead time × season × orography) cell: positive values (green) mean model 1 is better; the colourscale is symmetric (default ±20%, per-score).
+
+#### Configuration options
+
+All options live under the `plot:` block. Only these keys are read — any others are ignored.
+
+| Key | Values | Default | Effect |
+|-----|--------|---------|--------|
+| `enabled` | `true` / `false` | `true` | Master switch. `false` skips Step 9 entirely. |
+| `heatmap_style` | `"smooth"` / `"normal"` | `"normal"` | `smooth` = interpolated heatmaps **plus** a combined 4-score panel figure; `normal` = discrete blocky heatmaps, one per score. Use `smooth` for publication-style figures. |
+| `create_summary` | `true` / `false` | `true` | Additionally draw the multi-panel diagnostic summary figure. Only produced for single-condition runs, and skipped automatically when re-plotting from saved CSVs (raw pairs aren't reloaded). |
+| `dpi` | integer | `300` | Output resolution in dots-per-inch. Lower (e.g. `150`) for quick previews, higher for print. |
+| `format` | `"png"` / `"pdf"` / `"svg"` | `"png"` | Output file type. Use `pdf`/`svg` for scalable vector figures. |
+| `forecast_days` | list of ints, e.g. `[1, 3, 5]` | all scored days | Restrict the heatmap columns to these lead days. Omit to show every day that was scored. |
+
+#### What gets produced
+
+With `heatmap_style: "smooth"` a typical run writes, per season:
+
+| File | Content |
+|------|---------|
+| `heatmap_smooth_panel_<var>_<m1>_vs_<m2>_<season>.<fmt>` | 4-panel summary scorecard (the headline figure) |
+| `heatmap_smooth_<score>_<var>_<m1>_vs_<m2>_<season>.<fmt>` | one per-score heatmap for each available score |
+
+The 4-panel headline figure contains:
 
 | Panel | Score | Interpretation |
 |-------|-------|----------------|
@@ -418,6 +469,31 @@ Draws a 4-panel heatmap scorecard (`smooth` style):
 | D | twQS at extreme-tail level (q99 / q01) | Tail calibration at the extreme |
 
 Positive values (green) indicate model 1 is better than model 2. The colorscale is symmetric ±20%.
+
+#### Re-plotting without re-scoring
+
+To tweak plot styling/format without recomputing scores, set `skip_scoring_if_exists: true` at the top level of the config and rerun. If the score CSVs already exist in the `save.output_directory`, Steps 4–8 are skipped and only Step 9 runs against the saved results (the `create_summary` figure is skipped in this mode).
+
+**Example** — regenerate only the plots after changing appearance (e.g. switch to PDF at higher resolution):
+
+```yaml
+# in your config.yaml
+skip_extraction_if_exists: true   # keep existing parquet files
+skip_scoring_if_exists:    true   # keep existing score CSVs → only Step 9 runs
+
+plot:
+  enabled: true
+  heatmap_style: "smooth"
+  format: "pdf"                    # was "png"
+  dpi: 300
+```
+
+```bash
+# then just rerun the pipeline on the same config
+python run.py config.yaml
+```
+
+Because both `skip_*_if_exists` flags are `true`, extraction and scoring are skipped and the run only redraws the figures from the saved CSVs — fast, and safe to repeat while iterating on `format`, `dpi`, `heatmap_style`, or `forecast_days`.
 
 ---
 
@@ -610,16 +686,19 @@ Stations with `lsm < coastal_lsm_threshold` (default 0.9) are considered coastal
 
 ```
 /perm/user/results/my_experiment/
-├── scores_DJF_flat.csv
-├── scores_DJF_hilly.csv
-├── scores_DJF_complex.csv
-├── scores_JJA_flat.csv
+├── scores_by_leadtime_2t_DJF_flat.csv                 ← per-lead-time scores + CIs
+├── overall_scores_2t_DJF_flat.csv                     ← period-aggregated scores
+├── scores_by_leadtime_2t_DJF_complex.csv
 ├── ...
-├── heatmap_DJF_flat.png
-├── heatmap_DJF_hilly.png
+├── heatmap_smooth_twMAE_2t_modelA_vs_modelB_DJF.png   ← one heatmap per score
+├── heatmap_smooth_twCRPS_2t_modelA_vs_modelB_DJF.png
 ├── ...
-└── panel_heatmap_DJF_flat.png   ← 4-panel summary scorecard
+└── heatmap_smooth_panel_2t_modelA_vs_modelB_DJF.png   ← 4-panel summary scorecard
 ```
+
+Heatmap filenames follow `heatmap_smooth[_<score>]_<variable>_<model1>_vs_<model2>_<season>.<format>`
+(the `_smooth` segment is dropped when `heatmap_style: "normal"`; `<format>` follows `plot.format`).
+Terrain classes are column groups **within** each figure, not separate files.
 
 ### CSV format
 
@@ -714,7 +793,7 @@ sbatch obs_clim_local_Italy/run.sh
 
 ### `diagnostics/diagnose_extremes.py` — Comprehensive single-condition diagnostics
 
-Produces **21 diagnostic plots** for a specific (day, season, orography, threshold) combination. Reads from the extracted parquet files; the main pipeline must have completed through Step 3 first.
+Produces **22 diagnostic plots** for a specific (day, season, orography, threshold) combination. Reads from the extracted parquet files; the main pipeline must have completed through Step 3 first.
 
 ```bash
 python diagnostics/diagnose_extremes.py \
@@ -756,6 +835,7 @@ sbatch submit_diagnose.sh --config configs/deterministic/config_2t_local_p1obscl
 | 19 | Count Evolution | Absolute hits/misses/FAs across threshold sweep |
 | 20 | Count Difference | Δhits/Δmisses/ΔFAs between models across sweep |
 | 21 | Detection Profile | Normalised 100% stacked bars — fraction of sample |
+| 22 | Conditional Bias Decomposed | Splits Plot 15's conditional bias into **real events** (`fc − obs \| obs ≥ T`, hits ∪ misses — negative = under-prediction of true extremes) vs **false alarms** (`fc − obs \| fc ≥ T, obs < T` — always positive), so the two opposite-signed error sources are not blended into one misleading average |
 
 Output goes to `{save.output_directory}/day{N}_pct{P}_{SEASON}_{OROG}/`.
 

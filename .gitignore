@@ -22,6 +22,14 @@ diagnose_*.out
 diagnose_*.err
 *.slurm.out
 *.slurm.err
+slurm-*.out
+obs_clim_local/out_tmax_*
+obs_clim_local/out_tmin_*
+obs_clim_local/obsclim_*.out
+obs_clim_local/obsclim_*.err
+
+# ── AI assistant local settings ────────────────────────────────────────────────
+.claude/
 
 # ── User-generated output (results, extracted points, plots) ──────────────────
 results/

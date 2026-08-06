@@ -7,6 +7,7 @@ Extract forecast at observation locations using nearest gridpoint
 import metview as mv
 import pandas as pd
 import numpy as np
+import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
 from utils import format_threshold_string as _format_threshold_string
@@ -199,6 +200,18 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
         
         # Progress: Processing day X of Y
         print(f"\n  Processing day {day_number}/{total_days}: {date_str}")
+        
+        # Skip dates that were already successfully extracted in a previous run.
+        # A date is considered complete if at least one tmp file exists for it.
+        # (All day-files for a date are written atomically in the flush block below.)
+        if save_format == 'pandas':
+            tmp_dir_check = output_path / '_tmp'
+            if tmp_dir_check.is_dir():
+                existing_tmp = sorted(tmp_dir_check.glob(f"{date_str}_day*.parquet"))
+                if existing_tmp:
+                    print(f"    ✓ Already extracted ({len(existing_tmp)} day files). Skipping.")
+                    current_dt += timedelta(days=1)
+                    continue
         
         # Read GRIB files ONCE per day for both models
         fc1_grib = None
@@ -589,6 +602,8 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                             obs_vals = [obs_vals[i] for i in valid_indices]
                             fc1_vals = [fc1_vals[i] for i in valid_indices]
                             fc2_vals = [fc2_vals[i] for i in valid_indices]
+                            fc1_vals_uncorrected = [fc1_vals_uncorrected[i] for i in valid_indices]
+                            fc2_vals_uncorrected = [fc2_vals_uncorrected[i] for i in valid_indices]
                             sdfor_vals = [sdfor_vals[i] for i in valid_indices]
                             lsm_vals = [lsm_vals[i] for i in valid_indices]
                             obs_heights = [obs_heights[i] for i in valid_indices]
@@ -682,8 +697,13 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
         print(f"    → Extracted {day_pairs} station-pairs for this day")
         print(f"    → Total so far: {processed_pairs} pairs, {errors} errors")
         
-        # Save data by forecast day periodically to avoid memory buildup (every 10 calendar days)
-        if save_format == 'pandas' and day_number % 10 == 0:
+        # Flush this date's data to temporary per-date parquets immediately so we
+        # never hold many days of data in RAM at once, AND so that a killed/
+        # resubmitted job can resume right after the last flushed date instead of
+        # re-extracting from start_date (see skip check at the top of this loop).
+        if save_format == 'pandas':
+            tmp_dir = output_path / '_tmp'
+            tmp_dir.mkdir(parents=True, exist_ok=True)
             for fday in list(data_by_forecast_day.keys()):
                 if len(data_by_forecast_day[fday]) > 0:
                     # Apply area filtering if configured
@@ -699,22 +719,21 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                                 if (row['lat'] >= lat_south and row['lat'] <= lat_north and
                                     row['lon'] >= lon_west and row['lon'] <= lon_east)
                             ]
-                            if day_number == 10:  # Report once
+                            if day_number == 1:  # Report once
                                 print(f"    🔍 Area filtering: {original_count} → {len(data_to_save)} stations ({100*len(data_to_save)/original_count:.1f}%)")
                     
-                    df_batch = pd.DataFrame(data_to_save)
-                    filename_base = f"{variable}_{fc1_name}_vs_{fc2_name}_day{fday}"
-                    # Write a uniquely-named batch file (avoids growing read-append-write)
-                    batch_file = output_path / f"{filename_base}_batch_{day_number:04d}.parquet"
-                    df_batch.to_parquet(batch_file, index=False, compression='snappy')
-                    
-                    del df_batch
-                    data_by_forecast_day[fday] = []  # Clear memory for this day
+                    df_tmp = pd.DataFrame(data_to_save)
+                    # Downcast float64 → float32 to halve storage and speed up later reads
+                    for _col in df_tmp.select_dtypes(include='float64').columns:
+                        df_tmp[_col] = df_tmp[_col].astype('float32')
+                    tmp_file = tmp_dir / f"{date_str}_day{fday}.parquet"
+                    df_tmp.to_parquet(tmp_file, index=False, compression='snappy')
+                    del df_tmp
+                data_by_forecast_day[fday] = []  # Clear memory for this day
             
             # Force garbage collection
             import gc
             gc.collect()
-            print(f"  💾 Saved forecast day batches at calendar day {day_number}")
         
         current_dt += timedelta(days=1)
     
@@ -723,84 +742,31 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
     if save_format == 'pandas':
         import gc
         
-        # Save any remaining data by forecast day
+        # Merge temporary per-date parquets (written in the flush block above,
+        # including from any earlier, interrupted run) into final per-forecast-day files.
         print(f"\n  Finalizing forecast day files...")
         saved_files = []
         total_rows_by_day = {}
+        filename_base_prefix = f"{variable}_{fc1_name}_vs_{fc2_name}"
+        tmp_dir = output_path / '_tmp'
         
-        for fday in sorted(data_by_forecast_day.keys()):
-            if len(data_by_forecast_day[fday]) > 0:
-                # Apply area filtering if configured
-                data_to_save = data_by_forecast_day[fday]
-                if area_config:
-                    area_bbox = get_area_bbox(area_config)
-                    if area_bbox:
-                        original_count = len(data_to_save)
-                        # Filter by lat/lon
-                        lat_north, lon_west, lat_south, lon_east = area_bbox
-                        data_to_save = [
-                            row for row in data_to_save
-                            if (row['lat'] >= lat_south and row['lat'] <= lat_north and
-                                row['lon'] >= lon_west and row['lon'] <= lon_east)
-                        ]
-                        print(f"    🔍 Area filtering day {fday}: {original_count} → {len(data_to_save)} stations ({100*len(data_to_save)/original_count:.1f}%)")
-                
-                df_final = pd.DataFrame(data_to_save)
-                filename_base = f"{variable}_{fc1_name}_vs_{fc2_name}_day{fday}"
-                final_file = output_path / f"{filename_base}.parquet"
-                
-                # Collect all numbered batch files for this forecast day
-                batch_files = sorted(output_path.glob(f"{filename_base}_batch_*.parquet"))
-                if batch_files:
-                    dfs = [pd.read_parquet(f) for f in batch_files]
-                    if len(df_final) > 0:
-                        dfs.append(df_final)
-                    df_final = pd.concat(dfs, ignore_index=True)
-                    del dfs
-                    for f in batch_files:
-                        f.unlink()
-                
-                # Save final file for this forecast day
+        if tmp_dir.is_dir():
+            tmp_files = sorted(tmp_dir.glob('*_day*.parquet'))
+            days_found = sorted(set(int(f.stem.split('_day')[1]) for f in tmp_files))
+            
+            for fday in days_found:
+                day_files = sorted(tmp_dir.glob(f'*_day{fday}.parquet'))
+                dfs = [pd.read_parquet(f) for f in day_files]
+                df_final = pd.concat(dfs, ignore_index=True)
+                final_file = output_path / f"{filename_base_prefix}_day{fday}.parquet"
                 df_final.to_parquet(final_file, index=False, compression='snappy')
                 total_rows_by_day[fday] = len(df_final)
                 saved_files.append(final_file)
                 print(f"    ✓ Day {fday}: {len(df_final):,} rows → {final_file.name}")
-                del df_final
+                del dfs, df_final
                 gc.collect()
-        
-        # Also finalize any batch files for forecast days with no remaining in-memory data
-        import re
-        batch_pattern = f"{variable}_{fc1_name}_vs_{fc2_name}_day*_batch_*.parquet"
-        # Group batch files by forecast day
-        fday_batches = {}
-        for batch_file in sorted(output_path.glob(batch_pattern)):
-            match = re.search(r'_day(\d+)_batch_', batch_file.name)
-            if match:
-                fday = int(match.group(1))
-                fday_batches.setdefault(fday, []).append(batch_file)
-        for fday, batch_files in fday_batches.items():
-            if fday not in total_rows_by_day:
-                try:
-                    dfs = [pd.read_parquet(f) for f in sorted(batch_files)]
-                    df = pd.concat(dfs, ignore_index=True)
-                    del dfs
-                    final_file = output_path / f"{variable}_{fc1_name}_vs_{fc2_name}_day{fday}.parquet"
-                    df.to_parquet(final_file, index=False, compression='snappy')
-                    total_rows_by_day[fday] = len(df)
-                    saved_files.append(final_file)
-                    print(f"    ✓ Day {fday}: {len(df):,} rows → {final_file.name}")
-                    del df
-                    for f in batch_files:
-                        f.unlink()
-                    gc.collect()
-                except Exception as e:
-                    print(f"    ⚠️  Warning: Could not finalize day {fday} batches: {e}")
-                    for f in batch_files:
-                        try:
-                            f.unlink()
-                        except Exception:
-                            pass
-                    gc.collect()
+            
+            shutil.rmtree(tmp_dir, ignore_errors=True)
         
         # Print summary
         total_rows = sum(total_rows_by_day.values())

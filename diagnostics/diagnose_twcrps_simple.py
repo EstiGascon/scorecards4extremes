@@ -36,15 +36,23 @@ import pyarrow.parquet as pq
 import yaml
 from scipy.stats import gaussian_kde
 
-sys.path.insert(0, str(Path(__file__).parent))
+# Put the repo root (parent of diagnostics/) on sys.path so `case_studies` is
+# importable when the script is run as `python diagnostics/<this>.py` from the
+# repo root (the invocation documented in docs/USER_GUIDE.md).  Running Python on
+# a file puts the file's own directory on sys.path[0], not the repo root, so
+# inserting diagnostics/ here (as before) never resolved the import below.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling _style module
 from case_studies.case_study_utils import load_per_station_thresholds
+import _style
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 SEASON_MONTHS = {"DJF": {12, 1, 2}, "MAM": {3, 4, 5},
                  "JJA": {6, 7, 8},  "SON": {9, 10, 11}}
-C1   = "#d7191c"   # IFS-ENS (red)
-C2   = "#2c7bb6"   # AIFS-ENS (blue)
-COBS = "#1a9641"   # Observations (green)
+# Shared, colourblind-safe palette (see diagnostics/_style.py)
+C1   = _style.C_FC1   # model1 / IFS-ENS   — blue
+C2   = _style.C_FC2   # model2 / AIFS-ENS  — vermillion
+COBS = _style.C_OBS   # observations       — green
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -59,12 +67,18 @@ def _month(d):
 
 
 def load_season_data(parquet_path, season, orog_range, config,
-                     max_samples=300_000, seed=42):
+                     max_samples=None, seed=42):
     """Load parquet, filter by season + orography, aggregate to daily means,
     return (df, n_raw).
 
     The pipeline aggregates 6-hourly ensemble data to daily means before scoring.
     We replicate that here so that extreme events and scores match the heatmap.
+
+    Note: max_samples/seed are accepted for backward compatibility but are no
+    longer used — the data is returned in full so that the extreme-event counts,
+    exceedance frequencies and fallback twCRPS are exact rather than computed on a
+    random subsample.  After daily aggregation the per-season/per-orography subset
+    is small enough to hold in memory.
     """
     months = SEASON_MONTHS[season]
     lo, hi = orog_range
@@ -73,7 +87,10 @@ def load_season_data(parquet_path, season, orog_range, config,
     for batch in pf.iter_batches(batch_size=100_000):
         chunk = batch.to_pandas()
         n_raw += len(chunk)
-        chunk = chunk[chunk["date"].apply(_month).isin(months)]
+        # Vectorised month filter (dates stored as YYYYMMDD ints/strings) — much
+        # faster than a per-row .apply(_month) over every 100k-row batch.
+        month_of = chunk["date"].astype(str).str[4:6].astype(int)
+        chunk = chunk[month_of.isin(months)]
         if "sdfor" in chunk.columns:
             chunk = chunk[(chunk["sdfor"] >= lo) & (chunk["sdfor"] < hi)]
         if not chunk.empty:
@@ -94,11 +111,6 @@ def load_season_data(parquet_path, season, orog_range, config,
     agg_dict     = {c: "mean" for c in ["obs_value"] + member_cols}
     agg_dict.update({c: "first" for c in static_cols})
     df = df.groupby(["date", "station_id"], as_index=False).agg(agg_dict)
-
-    if max_samples and len(df) > max_samples:
-        rng = np.random.default_rng(seed)
-        idx = sorted(rng.choice(len(df), size=max_samples, replace=False))
-        df = df.iloc[idx].reset_index(drop=True)
     return df, n_raw
 
 
@@ -183,6 +195,7 @@ def make_figure(results, m1_name, m2_name, day, orog, event_type,
         # twCRPS: use pipeline CSV if available (matches heatmap exactly),
         # otherwise fall back to computing over extreme events only
         tw1, tw2 = None, None
+        tw_sig = None   # bootstrap significance of the all-events twCRPS difference
         if results_dir:
             orog_key_csv = orog.lower()
             csv_path = Path(results_dir) / f"scores_by_leadtime_{variable}_{season}_{orog_key_csv}.csv"
@@ -193,13 +206,17 @@ def make_figure(results, m1_name, m2_name, day, orog, event_type,
                     if not row_csv.empty and "twCRPS_fc1" in csv_df.columns:
                         tw1 = float(row_csv["twCRPS_fc1"].iloc[0])
                         tw2 = float(row_csv["twCRPS_fc2"].iloc[0])
+                        if "twCRPS_is_significant" in csv_df.columns:
+                            tw_sig = bool(row_csv["twCRPS_is_significant"].iloc[0])
                         print(f"  {season}: pipeline twCRPS  IFS={tw1:.5f}  AIFS={tw2:.5f}")
                 except Exception as e:
                     print(f"  Warning: could not read pipeline CSV: {e}")
-        if tw1 is None:
+        csv_used = tw1 is not None
+        if not csv_used:
             tw1 = twcrps_score(fc1_ext, obs_ext, T_ext, event_type)
             tw2 = twcrps_score(fc2_ext, obs_ext, T_ext, event_type)
-            print(f"  {season}: computed twCRPS (extreme only)  IFS={tw1:.5f}  AIFS={tw2:.5f}")
+            print(f"  {season}: no pipeline CSV — showing twCRPS over extreme events "
+                  f"only (IFS={tw1:.5f}  AIFS={tw2:.5f})")
         score_row[season] = (tw1, tw2)
 
         # Normalise everything to (x - T) so "0 = at threshold"
@@ -304,21 +321,32 @@ def make_figure(results, m1_name, m2_name, day, orog, event_type,
         tw1_ext = twcrps_score(fc1_ext, obs_ext, T_ext, event_type)
         tw2_ext = twcrps_score(fc2_ext, obs_ext, T_ext, event_type)
         pct_ext  = 100.0 * (tw2_ext - tw1_ext) / tw1_ext
-        pct_all  = 100.0 * (tw2 - tw1) / tw1
+        winner_ext = "AIFS-ENS" if tw2_ext < tw1_ext else "IFS-ENS"
 
-        x      = np.array([0.0, 1.0, 2.5, 3.5])
-        labels = ["IFS-ENS\n(extreme\nevents only)",
-                  "AIFS-ENS\n(extreme\nevents only)",
-                  "IFS-ENS\n(all events,\npipeline score)",
-                  "AIFS-ENS\n(all events,\npipeline score)"]
-        vals   = [tw1_ext, tw2_ext, tw1, tw2]
-
-        # colour: green = winner in that group, grey = loser
-        c_ext = [C1 if tw1_ext < tw2_ext else "#bbbbbb",
-                 C2 if tw2_ext < tw1_ext else "#bbbbbb"]
-        c_all = [C1 if tw1 < tw2 else "#bbbbbb",
-                 C2 if tw2 < tw1 else "#bbbbbb"]
-        bar_colors = c_ext + c_all
+        if csv_used:
+            # Two groups: extreme-only (computed here) vs all-events (pipeline CSV).
+            pct_all  = 100.0 * (tw2 - tw1) / tw1
+            x      = np.array([0.0, 1.0, 2.5, 3.5])
+            labels = ["IFS-ENS\n(extreme\nevents only)",
+                      "AIFS-ENS\n(extreme\nevents only)",
+                      "IFS-ENS\n(all events,\npipeline score)",
+                      "AIFS-ENS\n(all events,\npipeline score)"]
+            vals   = [tw1_ext, tw2_ext, tw1, tw2]
+            c_ext = [C1 if tw1_ext < tw2_ext else "#bbbbbb",
+                     C2 if tw2_ext < tw1_ext else "#bbbbbb"]
+            c_all = [C1 if tw1 < tw2 else "#bbbbbb",
+                     C2 if tw2 < tw1 else "#bbbbbb"]
+            bar_colors = c_ext + c_all
+        else:
+            # No pipeline CSV → only the extreme-only score is available.  Show just
+            # those two bars rather than duplicating them under an "all events,
+            # pipeline score" label they are not.
+            x      = np.array([0.0, 1.0])
+            labels = ["IFS-ENS\n(extreme\nevents only)",
+                      "AIFS-ENS\n(extreme\nevents only)"]
+            vals   = [tw1_ext, tw2_ext]
+            bar_colors = [C1 if tw1_ext < tw2_ext else "#bbbbbb",
+                          C2 if tw2_ext < tw1_ext else "#bbbbbb"]
 
         bars = ax3.bar(x, vals, color=bar_colors, alpha=0.88,
                        width=0.7, edgecolor="black", lw=0.8, zorder=2)
@@ -329,20 +357,19 @@ def make_figure(results, m1_name, m2_name, day, orog, event_type,
                      f"{val:.4f}", ha="center", va="bottom",
                      fontsize=8, fontweight="bold", color="black")
 
-        # Bracket labels for the two groups
+        # Bracket labels per group
         y_bracket = max(vals) * 1.12
-        for xmid, label, pct, better in [
-            (0.5,  f"During extremes\n(obs > T)", pct_ext,
-             "AIFS" if pct_ext < 0 else "IFS"),
-            (3.0,  f"All cases\n(pipeline twCRPS)", pct_all,
-             "AIFS" if pct_all < 0 else "IFS"),
-        ]:
+        brackets = [(0.5, pct_ext, "AIFS" if pct_ext < 0 else "IFS", None)]
+        if csv_used:
+            brackets.append((3.0, pct_all, "AIFS" if pct_all < 0 else "IFS", tw_sig))
+        for xmid, pct, better, sig in brackets:
             clr_txt = C2 if better == "AIFS" else C1
-            ax3.annotate(
-                f"{better} wins ({abs(pct):.0f}%)",
-                xy=(xmid, y_bracket), ha="center", fontsize=9,
-                fontweight="bold", color=clr_txt
-            )
+            label = f"{better} wins ({abs(pct):.0f}%)"
+            marker = _style.significance_marker(sig) if sig is not None else ""
+            if marker:
+                label += f"\n{marker}"
+            ax3.annotate(label, xy=(xmid, y_bracket), ha="center", fontsize=9,
+                         fontweight="bold", color=clr_txt)
 
         ax3.set_xticks(x)
         ax3.set_xticklabels(labels, fontsize=8)
@@ -350,28 +377,33 @@ def make_figure(results, m1_name, m2_name, day, orog, event_type,
         ax3.set_facecolor("#f8f8f8")
         ax3.set_ylim(0, max(vals) * 1.3)
 
-        # Vertical separator between the two groups
-        ax3.axvline(1.75, color="gray", lw=1.0, ls="--", alpha=0.6)
-
-        winner_all = "AIFS-ENS" if tw2 < tw1 else "IFS-ENS"
-        winner_ext = "AIFS-ENS" if tw2_ext < tw1_ext else "IFS-ENS"
-        ax3.set_title(
-            f"{season}  ·  twCRPS comparison\n"
-            f"Extreme events → {winner_ext} wins  |  All events → {winner_all} wins",
-            fontsize=11, fontweight="bold"
-        )
-
-        # Explanation box
-        if winner_ext != winner_all:
-            msg = (f"⚠ Paradox: {winner_ext} is better during extreme events,\n"
-                   f"but {winner_all} wins the overall score.\n"
-                   f"Reason: the overall twCRPS is dominated by non-extreme days\n"
-                   f"(~{100*(n_total-n_ext)/n_total:.0f}% of cases). On those days,\n"
-                   f"{'AIFS-ENS' if winner_all=='IFS-ENS' else 'IFS-ENS'} generates more false alarms\n"
-                   f"(members > T when obs is not extreme), which adds penalty.")
+        if csv_used:
+            # Vertical separator between the two groups
+            ax3.axvline(1.75, color="gray", lw=1.0, ls="--", alpha=0.6)
+            winner_all = "AIFS-ENS" if tw2 < tw1 else "IFS-ENS"
+            ax3.set_title(
+                f"{season}  ·  twCRPS comparison\n"
+                f"Extreme events → {winner_ext} wins  |  All events → {winner_all} wins",
+                fontsize=11, fontweight="bold")
+            if winner_ext != winner_all:
+                msg = (f"⚠ Paradox: {winner_ext} is better during extreme events,\n"
+                       f"but {winner_all} wins the overall score.\n"
+                       f"Reason: the overall twCRPS is dominated by non-extreme days\n"
+                       f"(~{100*(n_total-n_ext)/n_total:.0f}% of cases). On those days,\n"
+                       f"{'AIFS-ENS' if winner_all=='IFS-ENS' else 'IFS-ENS'} generates more false alarms\n"
+                       f"(members > T when obs is not extreme), which adds penalty.")
+            else:
+                msg = (f"{winner_all} wins both during extreme events and overall.\n"
+                       f"Consistent performance across all conditions.")
         else:
-            msg = (f"{winner_all} wins both during extreme events and overall.\n"
-                   f"Consistent performance across all conditions.")
+            ax3.set_title(
+                f"{season}  ·  twCRPS during extreme events\n"
+                f"Extreme events → {winner_ext} wins",
+                fontsize=11, fontweight="bold")
+            msg = ("Pipeline all-events twCRPS not shown.\n"
+                   "Pass --results-dir <pipeline results> to add the\n"
+                   "all-events score that matches the heatmap.")
+
         ax3.text(0.5, -0.38, msg, transform=ax3.transAxes,
                  fontsize=8.5, ha="center", va="top", style="italic",
                  color="#333333",
@@ -393,7 +425,9 @@ def parse_args():
     p.add_argument("--orog",        default="low")
     p.add_argument("--day",         type=int, default=5)
     p.add_argument("--seasons",     nargs="+", default=["DJF", "JJA"])
-    p.add_argument("--max-samples", type=int, default=300_000, dest="max_samples")
+    p.add_argument("--max-samples", type=int, default=None, dest="max_samples",
+                   help="Deprecated/ignored — full data is now used so extreme "
+                        "counts and scores are exact (retained for compatibility).")
     p.add_argument("--output-dir",  default="case_study_output/twcrps_diagnostic",
                    dest="output_dir")
     p.add_argument("--results-dir", default=None, dest="results_dir",
@@ -403,6 +437,7 @@ def parse_args():
 
 def main():
     args   = parse_args()
+    _style.apply_style()
     config = load_config(args.config)
 
     m1_name    = config["read_data"]["forecast_model1"]["name"]
@@ -421,10 +456,22 @@ def main():
     orog_key   = args.orog.lower()
     aliases    = {"flat": "low", "hilly": "mid", "complex": "high"}
     orog_key   = aliases.get(orog_key, orog_key)
+    # Fail loudly rather than silently defaulting to (0, 40): a mismatch between
+    # the requested terrain and the config's orography_ranges keys would otherwise
+    # filter to the wrong terrain with no warning.
     if orog_key in raw_ranges:
         orog_range = tuple(raw_ranges[orog_key])
     else:
-        orog_range = {"low": (0, 40), "mid": (40, 120), "high": (120, 3000)}.get(orog_key, (0, 40))
+        _fallback = {"low": (0, 40), "mid": (40, 120), "high": (120, 3000)}
+        if orog_key not in _fallback:
+            sys.exit(
+                f"ERROR: orography '{args.orog}' → '{orog_key}' not found in config "
+                f"filter.orography_ranges ({list(raw_ranges)}) nor in the built-in "
+                f"fallback ({list(_fallback)}). Use one of low/flat, mid/hilly, high/complex."
+            )
+        orog_range = _fallback[orog_key]
+        print(f"  Note: '{orog_key}' not in config orography_ranges; "
+              f"using built-in fallback {orog_range}")
 
     print(f"Config : {args.config}")
     print(f"Variable: {variable}  |  Day {args.day}  |  Orog: {args.orog} {orog_range}")

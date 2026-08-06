@@ -245,10 +245,8 @@ def draw_station_map(ax, lats, lons, obs, fc, T, event_type, model_name,
         f"POD={pod:.2f}  FAR={far:.2f}  "
         f"Hits={masks['hit'].sum()}  "
         f"Misses={masks['miss'].sum()}  FA={masks['false_alarm'].sum()}",
-        fontsize=9, pad=4,
+        fontsize=12, pad=5,
     )
-    ax.legend(loc="lower left", fontsize=7, markerscale=0.7,
-              framealpha=0.88, edgecolor="grey", facecolor="white")
     return masks
 
 
@@ -387,7 +385,7 @@ def make_case_study_figure(lats, lons, obs, fc1_cls, fc2_cls, T_v, event_type,
                             extra_title: str = "") -> plt.Figure:
     fig = plt.figure(figsize=(22, 16))
     gs  = fig.add_gridspec(2, 2, hspace=0.35, wspace=0.22,
-                            left=0.04, right=0.97, top=0.91, bottom=0.04)
+                            left=0.04, right=0.97, top=0.94, bottom=0.08)
     ax_m1   = fig.add_subplot(gs[0, 0], projection=PROJ)
     ax_m2   = fig.add_subplot(gs[0, 1], projection=PROJ)
     ax_bars = fig.add_subplot(gs[1, 0])
@@ -408,7 +406,20 @@ def make_case_study_figure(lats, lons, obs, fc1_cls, fc2_cls, T_v, event_type,
              f"|  p{pct} per-station threshold")
     if extra_title:
         title += f"\n{extra_title}"
-    fig.suptitle(title, fontsize=12, weight="bold", y=0.97)
+    fig.suptitle(title, fontsize=13, weight="bold", y=0.975)
+
+    # Horizontal figure-level legend at the bottom
+    import matplotlib.patches as mpatches
+    legend_handles = [
+        mpatches.Patch(color=COLORS["hit"],         label=LABELS["hit"]),
+        mpatches.Patch(color=COLORS["miss"],        label=LABELS["miss"]),
+        mpatches.Patch(color=COLORS["false_alarm"], label=LABELS["false_alarm"]),
+        mpatches.Patch(color=COLORS["correct_neg"], label=LABELS["correct_neg"]),
+    ]
+    fig.legend(handles=legend_handles, loc="lower center",
+               bbox_to_anchor=(0.5, 0.005), ncol=4,
+               fontsize=12, frameon=True, framealpha=0.9,
+               edgecolor="grey", handlelength=2.0, handleheight=1.2)
     return fig
 
 
@@ -461,8 +472,8 @@ def make_values_figure(df_v: pd.DataFrame, T_v: np.ndarray,
 
     fig = plt.figure(figsize=(22, 9))
     gs  = fig.add_gridspec(1, 3, wspace=0.06,
-                            left=0.03, right=0.90, top=0.88, bottom=0.06)
-    cax = fig.add_axes([0.915, 0.14, 0.016, 0.64])
+                            left=0.03, right=0.90, top=0.88, bottom=0.10)
+    cax = fig.add_axes([0.915, 0.18, 0.016, 0.62])
 
     unit = "°C" if ("2t" in var or "temp" in var) else \
            "mm" if ("tp" in var or "precip" in var) else ""
@@ -490,7 +501,7 @@ def make_values_figure(df_v: pd.DataFrame, T_v: np.ndarray,
         pct_ext = 100 * ext_mask.sum() / max(len(vals), 1)
         ax.set_title(f"{panel_title}\n"
                      f"{ext_mask.sum()} extreme stations ({pct_ext:.1f}%,  black outline)",
-                     fontsize=9, pad=5)
+                     fontsize=12, pad=6)
         sc_last = sc
 
     # Single shared colourbar
@@ -504,7 +515,20 @@ def make_values_figure(df_v: pd.DataFrame, T_v: np.ndarray,
              f"|  Black outline = p{pct_cfg} extreme events ({event_lbl} threshold)")
     if extra_title:
         title += f"\n{extra_title}"
-    fig.suptitle(title, fontsize=11, weight="bold", y=0.97)
+    fig.suptitle(title, fontsize=13, weight="bold", y=0.975)
+
+    # Horizontal legend at bottom
+    import matplotlib.lines as mlines
+    ext_marker  = mlines.Line2D([], [], color="grey", marker="o", linestyle="None",
+                                markersize=9, markeredgecolor="black",
+                                markeredgewidth=0.9, label="Extreme station (above/below threshold)")
+    norm_marker = mlines.Line2D([], [], color="grey", marker="o", linestyle="None",
+                                markersize=5, markeredgewidth=0,
+                                label="Non-extreme station")
+    fig.legend(handles=[ext_marker, norm_marker], loc="lower center",
+               bbox_to_anchor=(0.45, 0.01), ncol=2,
+               fontsize=12, frameon=True, framealpha=0.9,
+               edgecolor="grey", handlelength=1.5)
     return fig
 
 

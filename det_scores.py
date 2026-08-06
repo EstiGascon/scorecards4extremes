@@ -150,9 +150,9 @@ def calculate_twmae(forecast, observation, threshold, event_type):
     twMAE = mean |v(fc) - v(obs)|
     """
     valid = ~(np.isnan(forecast) | np.isnan(observation))
+    if isinstance(threshold, np.ndarray):
+        valid &= ~np.isnan(threshold)  # keep only rows with a valid (non-NaN) threshold
     if event_type == 'below':
-        if isinstance(threshold, np.ndarray):
-            valid &= threshold > -np.inf  # keep all finite-threshold rows
         fc_v = np.minimum(forecast[valid], threshold[valid] if isinstance(threshold, np.ndarray) else threshold)
         obs_v = np.minimum(observation[valid], threshold[valid] if isinstance(threshold, np.ndarray) else threshold)
     else:

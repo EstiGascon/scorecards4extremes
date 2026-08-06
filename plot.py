@@ -11,6 +11,21 @@ import numpy as np
 import pandas as pd
 
 
+def _save_figure(output_dir, filename_stem, config=None):
+    """Save the current matplotlib figure, honoring plot.dpi and plot.format.
+
+    Reads `plot.dpi` (default 300) and `plot.format` (default 'png') from the
+    config so users can control output resolution and file type (e.g. 'pdf',
+    'svg'). Returns the written file's name (with extension).
+    """
+    plot_cfg = (config or {}).get('plot', {})
+    dpi = plot_cfg.get('dpi', 300)
+    fmt = str(plot_cfg.get('format', 'png')).lower().lstrip('.')
+    output_file = output_dir / f"{filename_stem}.{fmt}"
+    plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+    return output_file.name
+
+
 # All known score names in both deterministic and ensemble modes
 _DETERMINISTIC_SCORES = ['ETS', 'PSS', 'twMAE', 'twMAE_hits', 'twMAE_misses', 'twMAE_FA',
                          'twMAE_hit_mae', 'twMAE_miss_severity', 'twMAE_fa_severity',
@@ -114,7 +129,7 @@ def _detect_plottable_scores(by_leadtime_df):
     return available
 
 
-def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, model_names, score_type='twMAE', orog_type=None):
+def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, model_names, score_type='twMAE', orog_type=None, config=None):
     """
     Create heatmap showing score differences between two models across lead times
     Similar to the old analysis script style
@@ -301,14 +316,14 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
     
     # Save
     orog_suffix = f"_{orog_type}" if orog_type else ""
-    output_file = output_dir / f"heatmap_{score_type}_{variable}_{model_names['fc1_name']}_vs_{model_names['fc2_name']}{orog_suffix}.png"
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    stem = f"heatmap_{score_type}_{variable}_{model_names['fc1_name']}_vs_{model_names['fc2_name']}{orog_suffix}"
+    saved_name = _save_figure(output_dir, stem, config)
     plt.close()
     
-    print(f"  ✓ Saved heatmap: {output_file.name}")
+    print(f"  ✓ Saved heatmap: {saved_name}")
 
 
-def plot_summary(data, results_by_leadtime, variable, threshold, output_dir, model_names, orog_type=None):
+def plot_summary(data, results_by_leadtime, variable, threshold, output_dir, model_names, orog_type=None, config=None):
     """Create comprehensive summary plot comparing both models"""
     units = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm'}
     unit = units.get(variable, '')
@@ -402,11 +417,11 @@ def plot_summary(data, results_by_leadtime, variable, threshold, output_dir, mod
     plt.tight_layout()
     
     orog_suffix = f"_{orog_type}" if orog_type else ""
-    output_file = output_dir / f"summary_{variable}_{model_names['fc1_name']}_vs_{model_names['fc2_name']}{orog_suffix}.png"
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    stem = f"summary_{variable}_{model_names['fc1_name']}_vs_{model_names['fc2_name']}{orog_suffix}"
+    saved_name = _save_figure(output_dir, stem, config)
     plt.close()
     
-    print(f"  ✓ Saved: summary_{variable}_{model_names['fc1_name']}_vs_{model_names['fc2_name']}{orog_suffix}.png")
+    print(f"  ✓ Saved: {saved_name}")
 
 
 def create_multicolumn_heatmap(all_results, variable, threshold_value, output_dir, model_names, score_type='twMAE', season=None, config=None):
@@ -666,11 +681,11 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
     
     # Save (constrained_layout handles spacing automatically, no need for tight_layout)
     season_suffix = f"_{season}" if season else "_all_conditions"
-    output_file = output_dir / f"heatmap_{score_type}_{variable}_{model_names['fc1_name']}_vs_{model_names['fc2_name']}{season_suffix}.png"
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    stem = f"heatmap_{score_type}_{variable}_{model_names['fc1_name']}_vs_{model_names['fc2_name']}{season_suffix}"
+    saved_name = _save_figure(output_dir, stem, config)
     plt.close()
     
-    print(f"    ✓ Saved: heatmap_{score_type}_{variable}_{model_names['fc1_name']}_vs_{model_names['fc2_name']}{season_suffix}.png")
+    print(f"    ✓ Saved: {saved_name}")
 
 
 def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, output_dir, model_names, score_type='twMAE', season=None, config=None):
@@ -967,13 +982,13 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
 
     # ---- Save ----
     season_suffix = f"_{season}" if season else "_all_conditions"
-    output_file = output_dir / (
+    stem = (
         f"heatmap_smooth_{score_type}_{variable}_"
-        f"{model_names['fc1_name']}_vs_{model_names['fc2_name']}{season_suffix}.png"
+        f"{model_names['fc1_name']}_vs_{model_names['fc2_name']}{season_suffix}"
     )
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    saved_name = _save_figure(output_dir, stem, config)
     plt.close()
-    print(f"    ✓ Saved: {output_file.name}")
+    print(f"    ✓ Saved: {saved_name}")
 
 
 def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_dir, model_names, season=None, config=None):
@@ -1238,13 +1253,13 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
     )
 
     season_suffix = f'_{season}' if season else '_all_conditions'
-    output_file = output_dir / (
+    stem = (
         f'heatmap_smooth_panel_{variable}_'
-        f'{model_names["fc1_name"]}_vs_{model_names["fc2_name"]}{season_suffix}.png'
+        f'{model_names["fc1_name"]}_vs_{model_names["fc2_name"]}{season_suffix}'
     )
-    plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    saved_name = _save_figure(output_dir, stem, config)
     plt.close()
-    print(f'    ✓ Saved: {output_file.name}')
+    print(f'    ✓ Saved: {saved_name}')
 
 
 def run_step9(config, data_or_results, threshold_value, output_dir, model_names, season=None):
@@ -1256,9 +1271,9 @@ def run_step9(config, data_or_results, threshold_value, output_dir, model_names,
     print("STEP 9: PLOT RESULTS")
     print("="*80)
     
-    cfg = config['plot']
+    cfg = config.get('plot', {})
     
-    if not cfg['enabled']:
+    if not cfg.get('enabled', True):
         print("\n  Skipped (disabled in config)")
         return
     
@@ -1336,14 +1351,15 @@ def run_step9(config, data_or_results, threshold_value, output_dir, model_names,
                         output_dir, 
                         model_names,
                         score_type=score_type,
-                        orog_type=orog_type
+                        orog_type=orog_type,
+                        config=config,
                     )
         
         # Summary plot (original multi-panel view)
         if cfg.get('create_summary', True) and 'by_leadtime' in results:
             if data is not None:
                 print("\n  Creating summary plot:")
-                plot_summary(data, results['by_leadtime'], config['variable'], threshold_value, output_dir, model_names, orog_type)
+                plot_summary(data, results['by_leadtime'], config['variable'], threshold_value, output_dir, model_names, orog_type, config=config)
             else:
                 print("\n  Skipping summary plot (raw data not available when loading from saved results)")
     

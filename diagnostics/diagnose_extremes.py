@@ -28,6 +28,7 @@ Generates 21 diagnostic plots:
  19. Count Evolution (absolute hits / misses / FAs across threshold sweep)
  20. Count Difference (Δhits / Δmisses / ΔFAs between models across sweep)
  21. Detection Profile (normalised 100% stacked bars — fraction of total sample)
+ 22. Conditional Bias Decomposed (real events vs false alarms — see Plot 15's docstring)
 
 Usage
 -----
@@ -58,6 +59,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling _style module
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, for `import threshold`
+import _style
 
 warnings.filterwarnings("ignore")
 
@@ -106,6 +111,52 @@ def get_model_names(config):
     fc1 = config["read_data"]["forecast_model1"]["name"]
     fc2 = config["read_data"]["forecast_model2"]["name"]
     return fc1, fc2
+
+
+def _significance_from_csv(config, condition):
+    """Best-effort lookup of the pipeline's bootstrap significance flags.
+
+    The main pipeline (run.py) writes `<metric>_is_significant` columns into the
+    per-condition score CSVs.  We read those so the diagnostics can flag whether a
+    model difference is robust.  Returns {metric_lower: bool} for the current
+    day/season/orography, or {} if no matching CSV is found (the markers are then
+    simply omitted — this is an optional overlay, never a hard dependency).
+    """
+    results_dir = config.get("save", {}).get("output_directory")
+    if not results_dir:
+        return {}
+    var = condition["var_short"]
+    season = condition.get("season")
+    orog = condition.get("terrain")
+    day = condition.get("forecast_day")
+    # Filename conventions vary by config (season-split vs pooled); try both.
+    candidates = []
+    if season and orog and orog != "all":
+        candidates.append(f"scores_by_leadtime_{var}_{season}_{orog}.csv")
+    if orog and orog != "all":
+        candidates.append(f"scores_by_leadtime_{var}_{orog}.csv")
+    if season:
+        candidates.append(f"scores_by_leadtime_{var}_{season}.csv")
+    for name in candidates:
+        path = Path(results_dir) / name
+        if not path.exists():
+            continue
+        try:
+            df = pd.read_csv(path)
+            if day is not None and "forecast_day" in df.columns:
+                df = df[df["forecast_day"] == day]
+            if df.empty:
+                continue
+            out = {}
+            for col in df.columns:
+                if col.endswith("_is_significant"):
+                    metric = col[: -len("_is_significant")].lower()
+                    out[metric] = bool(df[col].all())
+            if out:
+                return out
+        except Exception as exc:
+            print(f"  Note: could not read significance from {path.name}: {exc}")
+    return {}
 
 
 def load_day(config, day):
@@ -389,7 +440,14 @@ def _savefig(fig, filename):
 
 
 def plot_skill_scores_comparison(fc1_data, fc2_data, obs_data, threshold, condition):
-    print("\n[1/9] Skill Score Comparison (POD, FAR, CSI)...")
+    """Detection skill: POD, FAR, CSI, ETS, PSS in one panel.
+
+    (Merges the former separate 'skill scores' and 'ETS/PSS' figures — they were
+    the same grouped-bar form.)  FAR is lower-is-better; it is marked so the
+    reader is not misled by sharing an axis with higher-is-better metrics.
+    Bootstrap significance of the difference is annotated where available.
+    """
+    print("\n[skill] Detection skill (POD, FAR, CSI, ETS, PSS)...")
     var_short = condition["var_short"]
     pct = condition.get("threshold_percentile") if condition.get("threshold_mode") == "percentile" else None
     obs_e = is_extreme_event(obs_data,  threshold, var_short, pct)
@@ -397,55 +455,51 @@ def plot_skill_scores_comparison(fc1_data, fc2_data, obs_data, threshold, condit
     fc2_e = is_extreme_event(fc2_data,  threshold, var_short, pct)
     scores1 = calculate_skill_scores(fc1_e, obs_e)
     scores2 = calculate_skill_scores(fc2_e, obs_e)
+    sig = _significance_from_csv(config=condition["_config"], condition=condition) \
+        if condition.get("_config") is not None else {}
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    metrics = ["POD", "FAR", "CSI"]
-    x = np.arange(len(metrics)); w = 0.35
-    bars1 = ax.bar(x - w/2, [scores1["pod"], scores1["far"], scores1["csi"]], w,
-                   label=condition["expver1"], alpha=0.8)
-    bars2 = ax.bar(x + w/2, [scores2["pod"], scores2["far"], scores2["csi"]], w,
-                   label=condition["expver2"], alpha=0.8)
+    keys = ["pod", "far", "csi", "ets", "pss"]
+    labels = ["POD ↑", "FAR ↓", "CSI ↑", "ETS ↑", "PSS ↑"]  # ↑/↓ = better direction
+    lower_better = {"far"}
+    v1 = [scores1[k] for k in keys]
+    v2 = [scores2[k] for k in keys]
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+    x = np.arange(len(keys)); w = 0.38
+    bars1 = ax.bar(x - w/2, v1, w, label=condition["expver1"], color=_style.C_FC1,
+                   alpha=0.9, edgecolor="white", lw=0.8)
+    bars2 = ax.bar(x + w/2, v2, w, label=condition["expver2"], color=_style.C_FC2,
+                   alpha=0.9, edgecolor="white", lw=0.8)
     for bars in (bars1, bars2):
         for bar in bars:
             h = bar.get_height()
             ax.text(bar.get_x() + bar.get_width()/2, h + 0.01, f"{h:.3f}",
-                    ha="center", va="bottom", fontsize=10)
-    ax.set_xlabel("Metric"); ax.set_ylabel("Score")
-    ax.set_title(f"Skill Scores — {get_threshold_description_from_condition(condition)}")
-    ax.set_xticks(x); ax.set_xticklabels(metrics)
-    ax.legend(); ax.grid(True, alpha=0.3); ax.set_ylim(0, 1)
+                    ha="center", va="bottom", fontsize=9)
+
+    # Winner star + significance per metric
+    y_top = max(max(v1), max(v2), 1.0)
+    for i, k in enumerate(keys):
+        model2_wins = (v2[i] < v1[i]) if k in lower_better else (v2[i] > v1[i])
+        ax.annotate("★", xy=(x[i] + (w/2 if model2_wins else -w/2),
+                              max(v1[i], v2[i]) + 0.05),
+                    ha="center", fontsize=12, color=_style.winner_color(model2_wins))
+        marker = _style.significance_marker(sig.get(k)) if k in sig else ""
+        if marker:
+            ax.annotate(marker, xy=(x[i], y_top * 1.10), ha="center", fontsize=8,
+                        style="italic",
+                        color="#333333" if marker.startswith("✓") else "#999999")
+
+    ax.axhline(0, color=_style.C_REF, ls="--", lw=0.8, alpha=0.6)
+    ax.set_xlabel("Metric  (↑ = higher better · ↓ = lower better)")
+    ax.set_ylabel("Score")
+    ax.set_title(f"Detection skill — {get_threshold_description_from_condition(condition)}\n"
+                 f"★ = winner   ·   ✓ sig. / n.s. = bootstrap significance of the difference",
+                 fontsize=11)
+    ax.set_xticks(x); ax.set_xticklabels(labels)
+    ax.legend(); ax.set_ylim(0, 1)
     _savefig(fig, f"1_skill_scores_{condition['expver1']}_vs_{condition['expver2']}"
                   f"_{condition['var_short']}_day{condition['forecast_day']}.png")
     return scores1, scores2
-
-
-def plot_ets_pss_comparison(fc1_data, fc2_data, obs_data, threshold, condition):
-    print("[2/9] ETS and PSS Comparison...")
-    var_short = condition["var_short"]
-    pct = condition.get("threshold_percentile") if condition.get("threshold_mode") == "percentile" else None
-    obs_e = is_extreme_event(obs_data, threshold, var_short, pct)
-    fc1_e = is_extreme_event(fc1_data, threshold, var_short, pct)
-    fc2_e = is_extreme_event(fc2_data, threshold, var_short, pct)
-    scores1 = calculate_skill_scores(fc1_e, obs_e)
-    scores2 = calculate_skill_scores(fc2_e, obs_e)
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    metrics = ["ETS", "PSS"]; x = np.arange(2); w = 0.35
-    bars1 = ax.bar(x - w/2, [scores1["ets"], scores1["pss"]], w,
-                   label=condition["expver1"], alpha=0.8)
-    bars2 = ax.bar(x + w/2, [scores2["ets"], scores2["pss"]], w,
-                   label=condition["expver2"], alpha=0.8)
-    for bars in (bars1, bars2):
-        for bar in bars:
-            h = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2, h + 0.01, f"{h:.3f}",
-                    ha="center", va="bottom", fontsize=10)
-    ax.axhline(0, color="k", ls="--", alpha=0.5)
-    ax.set_title(f"ETS and PSS — {get_threshold_description_from_condition(condition)}")
-    ax.set_xticks(x); ax.set_xticklabels(metrics)
-    ax.legend(); ax.grid(True, alpha=0.3)
-    _savefig(fig, f"2_ets_pss_{condition['expver1']}_vs_{condition['expver2']}"
-                  f"_{condition['var_short']}_day{condition['forecast_day']}.png")
 
 
 def plot_threshold_evolution(fc1_data, fc2_data, obs_data, condition):
@@ -483,9 +537,9 @@ def plot_threshold_evolution(fc1_data, fc2_data, obs_data, condition):
         [("pod","POD"), ("far","FAR"), ("csi","CSI"), ("ets","ETS"), ("pss","PSS")]
     ):
         ax = axes[i]
-        ax.plot(m1["X"], m1[metric], "o-", label=condition["expver1"], lw=2, ms=6)
-        ax.plot(m2["X"], m2[metric], "s-", label=condition["expver2"], lw=2, ms=6)
-        ax.axvline(main_ref, color="red", ls="--", alpha=0.7, label=main_label)
+        ax.plot(m1["X"], m1[metric], "o-", label=condition["expver1"], lw=2, ms=6, color=_style.C_FC1)
+        ax.plot(m2["X"], m2[metric], "s-", label=condition["expver2"], lw=2, ms=6, color=_style.C_FC2)
+        ax.axvline(main_ref, color=_style.C_THRESHOLD, ls="--", alpha=0.7, label=main_label)
         if metric in ("ets", "pss"):
             ax.axhline(0, color="k", ls="--", alpha=0.5)
         ax.set_xlabel(xlabel); ax.set_ylabel(name); ax.set_title(f"{name} vs {xlabel}")
@@ -570,8 +624,8 @@ def plot_frequency_bias_evolution(fc1_data, fc2_data, obs_data, condition):
     for name, style in [(condition["expver1"], "o-"), (condition["expver2"], "s-")]:
         sub = df[df["Model"] == name]
         ax.plot(sub["X"], sub["Bias"], style, label=name, lw=2, ms=6)
-    ax.axhline(1, color="red", ls="--", alpha=0.7, label="Perfect bias")
-    ax.axvline(main_ref, color="green", ls="--", alpha=0.7, label=main_label)
+    ax.axhline(1, color=_style.C_FC2, ls="--", alpha=0.7, label="Perfect bias")
+    ax.axvline(main_ref, color=_style.C_THRESHOLD, ls="--", alpha=0.7, label=main_label)
     ax.set_yscale("log")
     ax.set_xlabel(xlabel); ax.set_ylabel("Frequency Bias (fc/obs)")
     ax.set_title(f"Frequency Bias Evolution — {get_threshold_description_from_condition(condition)}")
@@ -593,13 +647,13 @@ def plot_empirical_distributions(fc1_data, fc2_data, obs_data, threshold, condit
         all_ex = np.concatenate([obs_ex, fc1_ex, fc2_ex])
         p1, p99 = np.nanpercentile(all_ex, [1, 99])
         pad = (p99 - p1) * 0.05
-        axes[0].hist(obs_ex, bins=30, alpha=0.7, density=True, color="black",
+        axes[0].hist(obs_ex, bins=30, alpha=0.7, density=True, color=_style.C_OBS,
                      label=f"Obs (n={len(obs_ex)})")
-        axes[0].hist(fc1_ex, bins=30, alpha=0.7, density=True, color="blue",
+        axes[0].hist(fc1_ex, bins=30, alpha=0.7, density=True, color=_style.C_FC1,
                      label=condition["expver1"])
-        axes[0].hist(fc2_ex, bins=30, alpha=0.7, density=True, color="red",
+        axes[0].hist(fc2_ex, bins=30, alpha=0.7, density=True, color=_style.C_FC2,
                      label=condition["expver2"])
-        axes[0].axvline(threshold, color="green", ls="--", lw=2,
+        axes[0].axvline(threshold, color=_style.C_THRESHOLD, ls="--", lw=2,
                         label=f"Threshold ({threshold:.2f})")
         axes[0].set_xlim(p1 - pad, p99 + pad)
         axes[0].set_title("Forecasts When Obs Were Extreme")
@@ -608,12 +662,12 @@ def plot_empirical_distributions(fc1_data, fc2_data, obs_data, threshold, condit
     all_full = np.concatenate([obs_data, fc1_data, fc2_data])
     p1f, p99f = np.nanpercentile(all_full, [0.5, 99.5])
     padf = (p99f - p1f) * 0.05
-    axes[1].hist(obs_data, bins=50, alpha=0.7, density=True, color="black", label="Obs")
-    axes[1].hist(fc1_data, bins=50, alpha=0.7, density=True, color="blue",
+    axes[1].hist(obs_data, bins=50, alpha=0.7, density=True, color=_style.C_OBS, label="Obs")
+    axes[1].hist(fc1_data, bins=50, alpha=0.7, density=True, color=_style.C_FC1,
                  label=condition["expver1"])
-    axes[1].hist(fc2_data, bins=50, alpha=0.7, density=True, color="red",
+    axes[1].hist(fc2_data, bins=50, alpha=0.7, density=True, color=_style.C_FC2,
                  label=condition["expver2"])
-    axes[1].axvline(threshold, color="green", ls="--", lw=2,
+    axes[1].axvline(threshold, color=_style.C_THRESHOLD, ls="--", lw=2,
                     label=f"Threshold ({threshold:.2f})")
     axes[1].set_xlim(p1f - padf, p99f + padf)
     axes[1].set_title("Full Database Distribution")
@@ -647,15 +701,15 @@ def plot_qq_plots(fc1_data, fc2_data, obs_data, threshold, condition):
         else:
             mask = obs_q >= threshold - 2
         if np.sum(mask) > 5:
-            axes[0].scatter(obs_q[mask], fc1_q[mask], alpha=0.7, s=20, color="blue",
+            axes[0].scatter(obs_q[mask], fc1_q[mask], alpha=0.7, s=20, color=_style.C_FC1,
                             label=condition["expver1"])
-            axes[0].scatter(obs_q[mask], fc2_q[mask], alpha=0.7, s=20, color="red",
+            axes[0].scatter(obs_q[mask], fc2_q[mask], alpha=0.7, s=20, color=_style.C_FC2,
                             label=condition["expver2"])
             lims = [min(obs_q[mask].min(), fc1_q[mask].min(), fc2_q[mask].min()),
                     max(obs_q[mask].max(), fc1_q[mask].max(), fc2_q[mask].max())]
             axes[0].plot(lims, lims, "k--", alpha=0.5, lw=2, label="Perfect")
-            axes[0].axvline(threshold, color="green", ls="--", alpha=0.7)
-            axes[0].axhline(threshold, color="green", ls="--", alpha=0.7)
+            axes[0].axvline(threshold, color=_style.C_THRESHOLD, ls="--", alpha=0.7)
+            axes[0].axhline(threshold, color=_style.C_THRESHOLD, ls="--", alpha=0.7)
             axes[0].set_title("Q-Q: Extreme Region (Zoomed)")
             axes[0].legend(); axes[0].grid(True, alpha=0.3)
 
@@ -663,14 +717,14 @@ def plot_qq_plots(fc1_data, fc2_data, obs_data, threshold, condition):
     obs_qf = np.percentile(obs_data, q_full)
     fc1_qf = np.percentile(fc1_data, q_full)
     fc2_qf = np.percentile(fc2_data, q_full)
-    axes[1].scatter(obs_qf, fc1_qf, alpha=0.7, s=15, color="blue", label=condition["expver1"])
-    axes[1].scatter(obs_qf, fc2_qf, alpha=0.7, s=15, color="red",  label=condition["expver2"])
+    axes[1].scatter(obs_qf, fc1_qf, alpha=0.7, s=15, color=_style.C_FC1, label=condition["expver1"])
+    axes[1].scatter(obs_qf, fc2_qf, alpha=0.7, s=15, color=_style.C_FC2,  label=condition["expver2"])
     lims_f = [min(obs_qf.min(), fc1_qf.min(), fc2_qf.min()),
               max(obs_qf.max(), fc1_qf.max(), fc2_qf.max())]
     axes[1].plot(lims_f, lims_f, "k--", alpha=0.5, lw=2, label="Perfect")
-    axes[1].axvline(threshold, color="green", ls="--", alpha=0.7,
+    axes[1].axvline(threshold, color=_style.C_THRESHOLD, ls="--", alpha=0.7,
                     label=f"Threshold ({threshold:.2f})")
-    axes[1].axhline(threshold, color="green", ls="--", alpha=0.7)
+    axes[1].axhline(threshold, color=_style.C_THRESHOLD, ls="--", alpha=0.7)
     axes[1].set_title("Q-Q: Full Database")
     axes[1].legend(); axes[1].grid(True, alpha=0.3)
 
@@ -695,7 +749,7 @@ def plot_contingency_table_comparison(fc1_data, fc2_data, obs_data, threshold, c
     h1, m1, fa1 = _ct(fc1_e, obs_e)
     h2, m2, fa2 = _ct(fc2_e, obs_e)
     labels = ["Hits", "Misses", "False Alarms"]
-    colors = ["green", "orange", "red"]
+    colors = [_style.C_HIT, _style.C_MISS, _style.C_FA]
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
     for ax, vals, title in [
@@ -709,8 +763,8 @@ def plot_contingency_table_comparison(fc1_data, fc2_data, obs_data, threshold, c
         ax.set_title(f"{title} — Contingency"); ax.grid(True, alpha=0.3)
 
     x = np.arange(len(labels)); w = 0.35
-    bars1 = axes[2].bar(x - w/2, [h1, m1, fa1], w, label=condition["expver1"], alpha=0.7, color="blue")
-    bars2 = axes[2].bar(x + w/2, [h2, m2, fa2], w, label=condition["expver2"], alpha=0.7, color="red")
+    bars1 = axes[2].bar(x - w/2, [h1, m1, fa1], w, label=condition["expver1"], alpha=0.7, color=_style.C_FC1)
+    bars2 = axes[2].bar(x + w/2, [h2, m2, fa2], w, label=condition["expver2"], alpha=0.7, color=_style.C_FC2)
     for bars in (bars1, bars2):
         for bar in bars:
             h = bar.get_height()
@@ -735,12 +789,16 @@ def plot_twmae_decomposition(fc1_data, fc2_data, obs_data, threshold, condition)
 
     When ``condition['threshold_arr']`` is a per-row NumPy array (e.g. from
     local_obs_climatology), all four case masks and per-case costs are computed
-    element-wise so the decomposition exactly mirrors the main pipeline.  Panel 4
-    then shows the distribution of per-station thresholds rather than a threshold
-    sweep (sweeping a per-station array is not well-defined).
+    element-wise so the decomposition exactly mirrors the main pipeline (verified
+    against det_scores.calculate_twmae_components / calculate_twmae: hit_cost,
+    miss_cost, fa_cost and the hit/miss/FA contribution totals match the
+    scores_by_leadtime CSV to within floating-point / minor dataset-snapshot
+    tolerance for both scalar and per-station thresholds).
 
-    When ``condition['threshold_arr']`` is None, the scalar ``threshold`` is used
-    and Panel 4 shows the classic threshold sweep.
+    Panel 4 is a waterfall/bridge chart of twMAE(fc2) − twMAE(fc1), decomposed
+    into Δhit / Δmiss / ΔFA contribution steps (in that order). Because the
+    three contributions are purely additive (they sum exactly to twMAE with no
+    cross terms), the bridge is exact and its three steps are order-independent.
     """
     print("[10/11] twMAE Decomposition (hits / misses / false alarms)...")
 
@@ -820,8 +878,8 @@ def plot_twmae_decomposition(fc1_data, fc2_data, obs_data, threshold, condition)
     d2 = _decompose(fc2_data, obs_data, T_for_decomp)
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 13))
-    c_hit = "#4CAF50"; c_miss = "#FF9800"; c_fa = "#F44336"
-    c1 = "#1565C0"; c2 = "#B71C1C"   # fc1=dark blue, fc2=dark red
+    c_hit = _style.C_HIT; c_miss = _style.C_MISS; c_fa = _style.C_FA
+    c1 = _style.C_FC1; c2 = _style.C_FC2   # fc1=dark blue, fc2=dark red
 
     # =========================================================================
     # Panel 1 (top-left): twMAE budget — stacked bar
@@ -1051,8 +1109,8 @@ def plot_twmae_percentile_decomposition(fc1_data, fc2_data, obs_data, condition)
     var_short  = condition["var_short"]
     var_lbl, unit = VARIABLE_LABELS.get(var_short, (var_short, ""))
     names  = [condition["expver1"], condition["expver2"]]
-    c1 = "#1565C0"; c2 = "#B71C1C"
-    c_hit = "#4CAF50"; c_miss = "#FF9800"; c_fa = "#F44336"
+    c1 = _style.C_FC1; c2 = _style.C_FC2
+    c_hit = _style.C_HIT; c_miss = _style.C_MISS; c_fa = _style.C_FA
 
     # Percentile set depends on tail direction
     cfg_raw    = condition.get('_config', None)
@@ -1373,7 +1431,7 @@ def plot_conditional_bias_noise(fc1_data, fc2_data, obs_data, condition):
     var_short  = condition["var_short"]
     var_lbl, unit = VARIABLE_LABELS.get(var_short, (var_short, ""))
     names  = [condition["expver1"], condition["expver2"]]
-    c1 = "#1565C0"; c2 = "#B71C1C"
+    c1 = _style.C_FC1; c2 = _style.C_FC2
     event_type = condition.get("event_type", "above")
 
     cfg_raw = condition.get('_config', None)
@@ -1478,6 +1536,133 @@ def plot_conditional_bias_noise(fc1_data, fc2_data, obs_data, condition):
                   f"_{condition['var_short']}_day{condition['forecast_day']}.png")
 
 
+def plot_conditional_bias_decomposed(fc1_data, fc2_data, obs_data, condition):
+    """Plot 22: Conditional bias, split into 'real events' vs 'false alarms'.
+
+    Figure 15's conditional bias mixes two opposite-signed error sources into
+    one blended average: (obs≥T, fc<T) misses pull it negative (model
+    UNDER-predicts real extremes — the classic, expected behaviour), while
+    (obs<T, fc≥T) false alarms pull it positive (model invents an extreme on a
+    day that wasn't one) — and since FAs are often as numerous as misses (or
+    more) with larger magnitude, the blended Fig-15 number can end up positive
+    even though the model clearly underestimates on the real events it misses.
+    This plot reports the two contributions SEPARATELY so that doesn't happen:
+
+      Left  — Bias on REAL events, mean(fc − obs | obs ≥ T)  (hits ∪ misses).
+              Negative = model under-predicts the true extreme (expected/typical
+              NWP behaviour — smoothing/damping of extremes).
+      Right — Bias on FALSE ALARMS, mean(fc − obs | fc ≥ T, obs < T).
+              Always positive by construction (fc crossed T, obs didn't) — shows
+              how far the model overshoots on its spurious extreme calls.
+
+    (event_type='below' mirrors this with obs≤T / fc≤T.)
+    """
+    print("[22] Conditional Bias — Real Events vs False Alarms (per-station T)...")
+
+    var_short  = condition["var_short"]
+    var_lbl, unit = VARIABLE_LABELS.get(var_short, (var_short, ""))
+    names  = [condition["expver1"], condition["expver2"]]
+    c1 = _style.C_FC1; c2 = _style.C_FC2
+    event_type = condition.get("event_type", "above")
+
+    if event_type == 'below':
+        pct_values = [10, 8, 6, 3, 1]
+    else:
+        pct_values = [90, 93, 96, 99]
+    pct_labels = [f"p{p}" for p in pct_values]
+
+    sweep = _perstation_sweep(condition, pct_values, obs_data, fc1_data, fc2_data)
+
+    real1, real2, fa1, fa2, T_reprs = [], [], [], [], []
+    for s in sweep:
+        obs_v, fc1_v, fc2_v, T_v = s['obs_v'], s['fc1_v'], s['fc2_v'], s['T_v']
+        if event_type == 'below':
+            real_m1 = obs_v <= T_v;                 real_m2 = obs_v <= T_v
+            fa_m1   = (obs_v > T_v) & (fc1_v <= T_v); fa_m2 = (obs_v > T_v) & (fc2_v <= T_v)
+        else:
+            real_m1 = obs_v >= T_v;                 real_m2 = obs_v >= T_v
+            fa_m1   = (obs_v < T_v) & (fc1_v >= T_v); fa_m2 = (obs_v < T_v) & (fc2_v >= T_v)
+
+        err1 = fc1_v - obs_v; err2 = fc2_v - obs_v
+        real1.append(float(np.mean(err1[real_m1])) if real_m1.sum() > 0 else np.nan)
+        real2.append(float(np.mean(err2[real_m2])) if real_m2.sum() > 0 else np.nan)
+        fa1.append(float(np.mean(err1[fa_m1])) if fa_m1.sum() > 0 else np.nan)
+        fa2.append(float(np.mean(err2[fa_m2])) if fa_m2.sum() > 0 else np.nan)
+        T_reprs.append(float(np.mean(T_v)))
+        ps_note = "per-station" if s['per_station'] else "pooled"
+        print(f"    p{s['pct']:>3} ({ps_note}): "
+              f"real1={real1[-1]:+.4f} (n={int(real_m1.sum())})  "
+              f"real2={real2[-1]:+.4f} (n={int(real_m2.sum())})  "
+              f"fa1={fa1[-1]:+.4f} (n={int(fa_m1.sum())})  "
+              f"fa2={fa2[-1]:+.4f} (n={int(fa_m2.sum())})")
+
+    x = np.arange(len(pct_values))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # ── LEFT: bias on real events (hits ∪ misses) ─────────────────────────
+    ax = axes[0]
+    ax.plot(x, real1, "o-", color=c1, lw=2.2, ms=8, label=names[0])
+    ax.plot(x, real2, "s-", color=c2, lw=2.2, ms=8, label=names[1])
+    ax.axhline(0, color="grey", ls="--", lw=1.2)
+    ax2 = ax.twiny()
+    ax2.set_xlim(ax.get_xlim()); ax2.set_xticks(x)
+    ax2.set_xticklabels([f"{T:.2f}" for T in T_reprs], fontsize=8, rotation=30)
+    ax2.set_xlabel(f"Mean T ({unit})", fontsize=9)
+    ax.set_xticks(x); ax.set_xticklabels(pct_labels, fontsize=11)
+    ax.set_ylabel(f"Mean (fc − obs) on real events ({unit})")
+    ax.set_title("Bias on REAL Events\nE[fc − obs | obs in tail]  (hits \u222a misses)\n"
+                 "Negative = model under-predicts the true extreme (typical)", fontsize=9)
+    ax.legend(); ax.grid(True, alpha=0.3)
+
+    # ── RIGHT: bias on false alarms ────────────────────────────────────────
+    ax = axes[1]
+    ax.plot(x, fa1, "o-", color=c1, lw=2.2, ms=8, label=names[0])
+    ax.plot(x, fa2, "s-", color=c2, lw=2.2, ms=8, label=names[1])
+    ax.axhline(0, color="grey", ls="--", lw=1.2)
+    ax2 = ax.twiny()
+    ax2.set_xlim(ax.get_xlim()); ax2.set_xticks(x)
+    ax2.set_xticklabels([f"{T:.2f}" for T in T_reprs], fontsize=8, rotation=30)
+    ax2.set_xlabel(f"Mean T ({unit})", fontsize=9)
+    ax.set_xticks(x); ax.set_xticklabels(pct_labels, fontsize=11)
+    ax.set_ylabel(f"Mean (fc − obs) on false alarms ({unit})")
+    ax.set_title("Bias on FALSE ALARMS\nE[fc − obs | fc in tail, obs not]\n"
+                 "Always positive by construction — lower = less severe overshoot", fontsize=9)
+    ax.legend(); ax.grid(True, alpha=0.3)
+
+    thr_type = "per-station obs clim" if any(s['per_station'] for s in sweep) else "pooled"
+    fig.suptitle(
+        f"Conditional Bias Decomposed — {names[0]}  vs  {names[1]}\n"
+        f"{var_lbl}  |  Day {condition['forecast_day']}  "
+        f"|  {condition.get('season','all')}  |  {condition.get('terrain','all')}  "
+        f"|  T: {thr_type}",
+        fontsize=11, weight="bold",
+    )
+    # ── Auto-interpretation ──────────────────────────────────────────────
+    _r1e, _r2e = real1[-1], real2[-1]
+    _f1e, _f2e = fa1[-1],   fa2[-1]
+    _pe = pct_values[-1]
+    if not any(np.isnan(v) for v in (_r1e, _r2e, _f1e, _f2e)):
+        _real_winner = names[0] if abs(_r1e) <= abs(_r2e) else names[1]
+        _fa_winner   = names[0] if _f1e <= _f2e else names[1]
+        _interp = (
+            f"► At p{_pe}: on REAL events, {names[0]} under/over-predicts by {_r1e:+.3f} {unit}, "
+            f"{names[1]} by {_r2e:+.3f} {unit} ({_real_winner} closer to zero = truer intensity).  "
+            f"On FALSE ALARMS, {names[0]} overshoots by {_f1e:+.3f} {unit}, "
+            f"{names[1]} by {_f2e:+.3f} {unit} ({_fa_winner} overshoots less).\n"
+            f"Compare to Fig 15's blended bias — if that number's sign looks surprising, "
+            f"it's because it mixes these two (typically opposite-signed) contributions "
+            f"weighted by how many cases fall in each bucket."
+        )
+    else:
+        _interp = "► Insufficient data at the most extreme level."
+    plt.tight_layout(rect=[0, 0.16, 1, 1])
+    fig.text(0.5, 0.01, _interp, ha='center', va='bottom', fontsize=8.5,
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='lightyellow',
+                       edgecolor='darkorange', alpha=0.93))
+    _savefig(fig, f"22_conditional_bias_decomposed_{condition['expver1']}_vs_{condition['expver2']}"
+                  f"_{condition['var_short']}_day{condition['forecast_day']}.png")
+
+
 def plot_twmae_skill_score(fc1_data, fc2_data, obs_data, condition):
     """Plot 16: twMAE skill score vs threshold sweep (per-station T at each level).
 
@@ -1501,7 +1686,7 @@ def plot_twmae_skill_score(fc1_data, fc2_data, obs_data, condition):
     var_short  = condition["var_short"]
     var_lbl, unit = VARIABLE_LABELS.get(var_short, (var_short, ""))
     names  = [condition["expver1"], condition["expver2"]]
-    c1 = "#1565C0"; c2 = "#B71C1C"
+    c1 = _style.C_FC1; c2 = _style.C_FC2
     event_type = condition.get("event_type", "above")
 
     if event_type == 'below':
@@ -1642,7 +1827,7 @@ def plot_error_depth_profile(fc1_data, fc2_data, obs_data, threshold, condition)
     var_short  = condition["var_short"]
     var_lbl, unit = VARIABLE_LABELS.get(var_short, (var_short, ""))
     names  = [condition["expver1"], condition["expver2"]]
-    c1 = "#1565C0"; c2 = "#B71C1C"
+    c1 = _style.C_FC1; c2 = _style.C_FC2
     event_type = condition.get("event_type", "above")
 
     threshold_arr = condition.get("threshold_arr", None)
@@ -1898,6 +2083,24 @@ def plot_summary_scorecard(fc1_data, fc2_data, obs_data, threshold, condition):
     w_bias,  dp_bias  = _bias_compare(bias1, bias2)
     w_mae,   dp_mae   = _compare(mae1, mae2, lower_is_better=True)
 
+    # Bootstrap significance of the difference (from the pipeline CSV, if present).
+    # Appended to the Δ column so the winner text stays clean for cell colouring.
+    sig = (_significance_from_csv(condition["_config"], condition)
+           if condition.get("_config") is not None else {})
+
+    def _sig(dp, key):
+        if key in sig:
+            return f"{dp}  {'✓' if sig[key] else 'n.s.'}"
+        return dp
+
+    dp_tot  = _sig(dp_tot,  "twmae")
+    dp_pod  = _sig(dp_pod,  "pod")
+    dp_far  = _sig(dp_far,  "far")
+    dp_ets  = _sig(dp_ets,  "ets")
+    dp_pss  = _sig(dp_pss,  "pss")
+    dp_bias = _sig(dp_bias, "bias")
+    dp_mae  = _sig(dp_mae,  "mae")
+
     def f5(v): return f"{v:.5f}"
     def f3(v): return f"{v:.3f}"
 
@@ -1918,7 +2121,7 @@ def plot_summary_scorecard(fc1_data, fc2_data, obs_data, threshold, condition):
     ]
     col_headers = ["Component / Metric",
                    names[0], names[1],
-                   f"\u0394 (m2\u2212m1)", "Winner"]
+                   f"\u0394 (m2\u2212m1)  \u00b7  \u2713/n.s.", "Winner"]
 
     # ── Cell colours matrix (one row per data row, one per column) ────────────
     CLR_SECTION = "#D5D8DC"   # grey section header
@@ -1940,7 +2143,9 @@ def plot_summary_scorecard(fc1_data, fc2_data, obs_data, threshold, condition):
     cell_colour = [_row_colours(*r) for r in rows]
 
     # ── Draw figure ───────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(15, 10))
+    # Height trimmed (was 10) so the table + narrative fill the figure instead of
+    # leaving ~45% empty vertical space.
+    fig, ax = plt.subplots(figsize=(15, 7.5))
     ax.set_axis_off()
 
     tbl = ax.table(
@@ -1948,7 +2153,7 @@ def plot_summary_scorecard(fc1_data, fc2_data, obs_data, threshold, condition):
         colLabels=col_headers,
         cellColours=cell_colour,
         loc='upper center',
-        bbox=[0.0, 0.28, 1.0, 0.68],   # [left, bottom, width, height] in axes coords
+        bbox=[0.0, 0.20, 1.0, 0.76],   # [left, bottom, width, height] in axes coords
     )
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(9.5)
@@ -2064,8 +2269,8 @@ def plot_twmae_component_fractions(fc1_data, fc2_data, obs_data, threshold, cond
     event_type = condition.get("event_type", "above")
     names      = [condition["expver1"], condition["expver2"]]
     var_lbl, unit = VARIABLE_LABELS.get(var_short, (var_short, ""))
-    c1 = "#1565C0"; c2 = "#B71C1C"
-    c_hit = "#4CAF50"; c_miss = "#FF9800"; c_fa = "#F44336"
+    c1 = _style.C_FC1; c2 = _style.C_FC2
+    c_hit = _style.C_HIT; c_miss = _style.C_MISS; c_fa = _style.C_FA
 
     threshold_arr = condition.get("threshold_arr", None)
     use_per_station = (threshold_arr is not None and
@@ -2255,7 +2460,7 @@ def plot_extreme_intensity_scatter(fc1_data, fc2_data, obs_data, threshold, cond
     event_type = condition.get("event_type", "above")
     names      = [condition["expver1"], condition["expver2"]]
     var_lbl, unit = VARIABLE_LABELS.get(var_short, (var_short, ""))
-    c1 = "#1565C0"; c2 = "#B71C1C"
+    c1 = _style.C_FC1; c2 = _style.C_FC2
 
     threshold_arr = condition.get("threshold_arr", None)
     use_per_station = (threshold_arr is not None and
@@ -2404,7 +2609,7 @@ def plot_miss_fa_severity(fc1_data, fc2_data, obs_data, condition):
     event_type = condition.get("event_type", "above")
     names      = [condition["expver1"], condition["expver2"]]
     var_lbl, unit = VARIABLE_LABELS.get(var_short, (var_short, ""))
-    c1 = "#1565C0"; c2 = "#B71C1C"
+    c1 = _style.C_FC1; c2 = _style.C_FC2
 
     mode = condition.get("threshold_mode", "percentile")
     thresholds, _, xlabel, main_label, percentiles = \
@@ -2457,7 +2662,7 @@ def plot_miss_fa_severity(fc1_data, fc2_data, obs_data, condition):
             sub = df_sev[(df_sev["Model"] == name) & (df_sev["type"] == sev_type)]
             ax.plot(sub["x"], sub["val"], f"{marker}-", color=col, lw=2.2,
                     ms=7, label=name)
-        ax.axvline(main_ref, color="green", ls="--", alpha=0.7, label=main_label)
+        ax.axvline(main_ref, color=_style.C_THRESHOLD, ls="--", alpha=0.7, label=main_label)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.set_title(title, fontsize=9)
@@ -2523,7 +2728,7 @@ def plot_count_evolution(fc1_data, fc2_data, obs_data, condition):
     event_type = condition.get("event_type", "above")
     names      = [condition["expver1"], condition["expver2"]]
     var_lbl, unit = VARIABLE_LABELS.get(condition["var_short"], (condition["var_short"], ""))
-    c1 = "#1565C0"; c2 = "#B71C1C"
+    c1 = _style.C_FC1; c2 = _style.C_FC2
 
     thresholds, _, xlabel, main_label, percentiles = \
         get_threshold_range_and_labels(condition, obs_data)
@@ -2628,7 +2833,7 @@ def plot_count_difference(fc1_data, fc2_data, obs_data, condition):
     for ax, vals, title, pos_lbl, neg_lbl, pos_good in panel_data:
         vals = np.array(vals, dtype=float)
         # Blue = M1 winning; Red = M2 winning — consistent with all other plots
-        bar_colors = ["#1565C0" if (v >= 0) == pos_good else "#B71C1C" for v in vals]
+        bar_colors = [_style.C_FC1 if (v >= 0) == pos_good else _style.C_FC2 for v in vals]
         ax.bar(x_vals, vals,
                color=bar_colors,
                alpha=0.75, width=(x_vals[1] - x_vals[0]) * 0.8 if len(x_vals) > 1 else 1)
@@ -2638,8 +2843,8 @@ def plot_count_difference(fc1_data, fc2_data, obs_data, condition):
         ax.set_ylabel("Count difference (M1 − M2)", fontsize=10)
         ax.grid(True, alpha=0.3, axis='y')
         # Label colours reflect who benefits: M1 colour if M1 wins, M2 colour if M2 wins
-        m1_wins_color = "#1565C0"
-        m2_wins_color = "#B71C1C"
+        m1_wins_color = _style.C_FC1
+        m2_wins_color = _style.C_FC2
         ax.text(0.97, 0.93, pos_lbl, transform=ax.transAxes, ha='right',
                 fontsize=8, color=m1_wins_color if pos_good else m2_wins_color)
         ax.text(0.97, 0.06, neg_lbl, transform=ax.transAxes, ha='right',
@@ -2750,8 +2955,8 @@ def plot_threshold_weighted_errors(fc1_data, fc2_data, obs_data, threshold, cond
          "MSE", "MSE Comparison"),
     ]:
         x = np.arange(2); w = 0.35
-        bars1 = ax.bar(x - w/2, v1s, w, label=condition["expver1"], alpha=0.8, color="blue")
-        bars2 = ax.bar(x + w/2, v2s, w, label=condition["expver2"], alpha=0.8, color="red")
+        bars1 = ax.bar(x - w/2, v1s, w, label=condition["expver1"], alpha=0.8, color=_style.C_FC1)
+        bars2 = ax.bar(x + w/2, v2s, w, label=condition["expver2"], alpha=0.8, color=_style.C_FC2)
         for bars in (bars1, bars2):
             for bar in bars:
                 h = bar.get_height()
@@ -2777,13 +2982,13 @@ def plot_threshold_weighted_errors(fc1_data, fc2_data, obs_data, threshold, cond
     ]:
         ax.axhline(reg1, ls="--", color="lightblue",  alpha=0.9,
                    label=f"{condition['expver1']} (all)")
-        ax.plot(x_vals, ev1, "o-", color="blue", lw=2, ms=5,
+        ax.plot(x_vals, ev1, "o-", color=_style.C_FC1, lw=2, ms=5,
                 label=f"{condition['expver1']} (extremes)")
         ax.axhline(reg2, ls="--", color="lightcoral", alpha=0.9,
                    label=f"{condition['expver2']} (all)")
-        ax.plot(x_vals, ev2, "s-", color="red",  lw=2, ms=5,
+        ax.plot(x_vals, ev2, "s-", color=_style.C_FC2,  lw=2, ms=5,
                 label=f"{condition['expver2']} (extremes)")
-        ax.axvline(main_ref, color="green", ls="--", alpha=0.7, label=main_label)
+        ax.axvline(main_ref, color=_style.C_THRESHOLD, ls="--", alpha=0.7, label=main_label)
         ax.set_xlabel(xlabel); ax.set_ylabel(ylabel); ax.set_title(title)
         ax.legend(); ax.grid(True, alpha=0.3)
 
@@ -2877,6 +3082,8 @@ Examples
     fc1_name, fc2_name = get_model_names(config)
     variable     = config["variable"]
 
+    _style.apply_style(save_dpi=300)
+
     SAVE_FIGURES = not args.no_save
     # Build a subdirectory that encodes all run parameters so different
     # combinations (season, orog, day, threshold) never overwrite each other.
@@ -2945,11 +3152,22 @@ Examples
     # computed on daily-mean data after the same aggregation in run.py).
     thr_method_main = config.get('threshold', {}).get('method', '')
     lead_freq       = config.get('lead_time_frequency', 24)
-    if thr_method_main == 'local_obs_climatology' and lead_freq < 24:
-        print(f"  Aggregating sub-daily ({lead_freq}h) data to daily means "
-              "(matches main pipeline scoring)...")
+    # Mirror run.py exactly so twMAE matches the heatmap CSV: the pipeline
+    # aggregates sub-daily rows to daily means for local_obs_climatology
+    # UNCONDITIONALLY (run.py STEP 5b, ~line 970), and for fixed thresholds only
+    # when the data is sub-daily (lead_time_frequency < 24).  Grouping by
+    # (lat, lon, date, forecast_day) is a no-op on already-daily data, so applying
+    # it unconditionally is safe — and, crucially, still correct when a config
+    # leaves lead_time_frequency unset (previously this branch was skipped because
+    # the default 24 failed the `lead_freq < 24` test, silently desyncing twMAE
+    # from the heatmap).
+    if thr_method_main == 'local_obs_climatology' or (
+            thr_method_main == 'fixed' and lead_freq < 24):
+        n_before = len(df)
         df = _aggregate_to_daily_mean_local(df, config)
-        print(f"  After daily aggregation: {len(df):,} rows")
+        print(f"  Daily aggregation ({thr_method_main}): "
+              f"{n_before:,} sub-daily rows → {len(df):,} daily rows "
+              "(matches main pipeline scoring)")
 
     # Downcast to float32 to halve peak memory (sufficient precision for all diagnostics)
     obs  = df["obs_value"].values.astype(np.float32)
@@ -3006,40 +3224,60 @@ Examples
     print("GENERATING DIAGNOSTIC PLOTS")
     print("=" * 50)
 
+    _plot_tally = {"ok": 0, "fail": 0}
+
     def _run(fn, *a, **kw):
-        result = fn(*a, **kw)
-        plt.close('all')
-        gc.collect()
+        """Run one plot in isolation: a failure in a single plot must not abort
+        the remaining plots (previously an exception here killed the whole run)."""
+        try:
+            result = fn(*a, **kw)
+            _plot_tally["ok"] += 1
+        except Exception as exc:
+            _plot_tally["fail"] += 1
+            print(f"  [WARN] {fn.__name__} failed: {exc!r} — skipping this plot")
+            result = None
+        finally:
+            plt.close('all')
+            gc.collect()
         return result
 
+    # ── Curated ("moderate") figure set — duplicates retired ─────────────────
+    # Retired to remove duplicate plot *types* (functions kept above for optional
+    # re-enable, but no longer generated by default):
+    #   • plot_ets_pss_comparison        → merged into plot_skill_scores_comparison
+    #   • plot_frequency_bias_evolution  → redundant with the threshold-evolution sweep
+    #   • plot_qq_plots                  → duplicated by the dedicated plot_qq.py tool
+    #   • plot_twmae_percentile_decomposition → sweep view overlaps threshold-evolution + twMAE decomp
+    #   • plot_twmae_component_fractions → this is panel 1 of plot_twmae_decomposition re-expressed as %
+    #   • plot_miss_fa_severity          → error/severity view folded into error_distribution + conditional_bias_noise
+    #   • plot_count_evolution           → the count difference view is the informative one
+    #   • plot_detection_profile         → normalised restatement of the contingency counts
+    #   • plot_error_depth_profile       → specialised; overlaps extreme_intensity_scatter
     _run(plot_skill_scores_comparison,       fc1, fc2, obs, threshold, condition)
-    _run(plot_ets_pss_comparison,            fc1, fc2, obs, threshold, condition)
     _run(plot_threshold_evolution,           fc1, fc2, obs, condition)
     _run(plot_error_distribution,            fc1, fc2, obs, condition)
-    _run(plot_frequency_bias_evolution,      fc1, fc2, obs, condition)
     _run(plot_empirical_distributions,       fc1, fc2, obs, threshold, condition)
-    _run(plot_qq_plots,                      fc1, fc2, obs, threshold, condition)
     _run(plot_contingency_table_comparison,  fc1, fc2, obs, threshold, condition)
-    _run(plot_threshold_weighted_errors,     fc1, fc2, obs, threshold, condition)
     _run(plot_twmae_decomposition,           fc1, fc2, obs, threshold, condition)
-    _run(plot_twmae_percentile_decomposition,  fc1, fc2, obs, condition)
-    _run(plot_twmae_component_fractions,     fc1, fc2, obs, threshold, condition)
     _run(plot_extreme_intensity_scatter,     fc1, fc2, obs, threshold, condition)
-    _run(plot_miss_fa_severity,              fc1, fc2, obs, condition)
-    _run(plot_count_evolution,               fc1, fc2, obs, condition)
     _run(plot_count_difference,              fc1, fc2, obs, condition)
-    _run(plot_detection_profile,             fc1, fc2, obs, condition)
     _run(plot_conditional_bias_noise,        fc1, fc2, obs, condition)
+    _run(plot_conditional_bias_decomposed,   fc1, fc2, obs, condition)
     _run(plot_twmae_skill_score,             fc1, fc2, obs, condition)
-    _run(plot_error_depth_profile,           fc1, fc2, obs, threshold, condition)
-    _run(plot_summary_scorecard,              fc1, fc2, obs, threshold, condition)
+    _run(plot_summary_scorecard,             fc1, fc2, obs, threshold, condition)
 
     # df is no longer needed after all plots are done
     del condition['_df'], condition['_config']
     gc.collect()
 
     print("\n" + "=" * 70)
-    print(f"DONE — {21 if SAVE_FIGURES else 0} plots saved to: {OUTPUT_PATH}")
+    if SAVE_FIGURES:
+        msg = f"DONE — {_plot_tally['ok']} plots saved to: {OUTPUT_PATH}"
+        if _plot_tally["fail"]:
+            msg += f"  ({_plot_tally['fail']} failed — see [WARN] lines above)"
+    else:
+        msg = "DONE — display mode (no plots saved)"
+    print(msg)
     print("=" * 70)
 
 

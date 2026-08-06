@@ -31,6 +31,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling _style module
+import _style
+
 # ============================================================================
 # CONSTANTS
 # ============================================================================
@@ -408,10 +411,10 @@ def plot_qq(
     frac_corr = (corr2 - corr1) / abs(corr1) * 100.0 if corr1 != 0.0 else 0.0
     frac_bias = (abs(bias2) - abs(bias1)) / abs(bias1) * 100.0 if bias1 != 0.0 else 0.0
 
-    # Colour scheme consistent with plot.py  (blue = fc1, red = fc2)
-    COLOR_FC1 = "#1f77b4"   # blue
-    COLOR_FC2 = "#d62728"   # red
-    COLOR_REF = "black"
+    # Shared colourblind-safe scheme (blue = fc1, vermillion = fc2) — see _style.py
+    COLOR_FC1 = _style.C_FC1
+    COLOR_FC2 = _style.C_FC2
+    COLOR_REF = _style.C_REF
 
     # ------------------------------------------------------------------ figure
     fig, ax = plt.subplots(figsize=(8, 7))
@@ -633,6 +636,7 @@ Examples
 
 def main():
     args = parse_args()
+    _style.apply_style()
     config = load_config(args.config)
     fc1_name, fc2_name = get_model_names(config)
 

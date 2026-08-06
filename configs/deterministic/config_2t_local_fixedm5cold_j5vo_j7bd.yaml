@@ -137,6 +137,5 @@ save:
 plot:
   heatmap_style: "smooth"
   enabled: true
-  create_heatmap: true
   dpi: 300
   format: "png"

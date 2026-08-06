@@ -35,13 +35,20 @@ import pyarrow.parquet as pq
 import yaml
 from scipy.stats import gaussian_kde
 
-sys.path.insert(0, str(Path(__file__).parent))
+# Put the repo root (parent of diagnostics/) on sys.path so `case_studies` is
+# importable when the script is run as `python diagnostics/<this>.py` from the
+# repo root (the invocation documented in docs/USER_GUIDE.md).  Running Python on
+# a file puts the file's own directory on sys.path[0], not the repo root, so
+# inserting diagnostics/ here (as before) never resolved the import below.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling _style module
 from case_studies.case_study_utils import load_per_station_thresholds
+import _style
 
-# ── Colours ───────────────────────────────────────────────────────────────────
-C1   = "#d7191c"   # IFS (red)
-C2   = "#2c7bb6"   # AIFS (blue)
-COBS = "#1a9641"   # Observations (green)
+# ── Colours (shared, colourblind-safe — see diagnostics/_style.py) ─────────────
+C1   = _style.C_FC1   # model1 / IFS   — blue
+C2   = _style.C_FC2   # model2 / AIFS  — vermillion
+COBS = _style.C_OBS   # observations   — green
 SEASON_MONTHS = {"DJF": {12,1,2}, "MAM": {3,4,5}, "JJA": {6,7,8}, "SON": {9,10,11}}
 
 
@@ -66,8 +73,15 @@ def kde_plot(ax, data, color, label, lw=2.0, alpha_fill=0.18, bw=0.3):
 
 
 def load_and_filter(parquet_path, season, orog_range, config,
-                    max_samples=400_000, seed=42):
-    """Load parquet, filter by season + orog + coastal, aggregate 6h→daily."""
+                    max_samples=None, seed=42):
+    """Load parquet, filter by season + orog + coastal, aggregate 6h→daily.
+
+    Note: max_samples/seed are accepted for backward compatibility but are no
+    longer used — the data is returned in full so that the extreme-event counts
+    and exceedance frequencies reported downstream are exact rather than computed
+    on a random subsample.  After daily aggregation the per-season/per-orography
+    subset is small enough to hold in memory.
+    """
     months = SEASON_MONTHS[season]
     lo, hi = orog_range
     coastal_thresh = config.get("filter", {}).get("coastal_lsm_threshold", 0.9)
@@ -77,7 +91,10 @@ def load_and_filter(parquet_path, season, orog_range, config,
     chunks = []
     for batch in pf.iter_batches(batch_size=100_000):
         chunk = batch.to_pandas()
-        chunk = chunk[chunk["date"].apply(_month).isin(months)]
+        # Vectorised month filter (dates are stored as YYYYMMDD ints/strings);
+        # much faster than a per-row .apply(_month) over every 100k-row batch.
+        month_of = chunk["date"].astype(str).str[4:6].astype(int)
+        chunk = chunk[month_of.isin(months)]
         if "sdfor" in chunk.columns:
             chunk = chunk[(chunk["sdfor"] >= lo) & (chunk["sdfor"] < hi)]
         if remove_coastal and "lsm" in chunk.columns:
@@ -88,7 +105,10 @@ def load_and_filter(parquet_path, season, orog_range, config,
         return None
     df = pd.concat(chunks, ignore_index=True)
 
-    # QC
+    # QC — this diagnostic is only ever run for 2t (temperature), so the fixed
+    # [-60, 60] °C validity window is appropriate.  It would silently drop valid
+    # extremes if reused for 10ff (>60 m/s) or tp24 (>60 mm); make it
+    # variable-aware before using this script for those variables.
     for col in ["obs_value", "fc1_value", "fc2_value"]:
         if col in df.columns:
             df = df[(df[col] > -60) & (df[col] < 60)]
@@ -98,10 +118,6 @@ def load_and_filter(parquet_path, season, orog_range, config,
     agg = {c: "mean" for c in ["obs_value", "fc1_value", "fc2_value"] if c in df.columns}
     agg.update({c: "first" for c in static_cols})
     df = df.groupby(["date", "station_id"], as_index=False).agg(agg)
-
-    if max_samples and len(df) > max_samples:
-        rng = np.random.default_rng(seed)
-        df = df.iloc[sorted(rng.choice(len(df), max_samples, replace=False))].reset_index(drop=True)
     return df
 
 
@@ -230,6 +246,7 @@ def make_figure(all_dfs, T_arrays, m1_name, m2_name, season, orog,
 
     # Read scores from CSV, average over requested days
     csv_rows = {"fc1": {}, "fc2": {}}
+    csv_sig = {}   # {score: bool} — bootstrap significance of the model difference
     score_cols = ["ETS", "PSS", "POD", "FAR", "twMAE"]
     csv_path = Path(results_dir) / f"scores_by_leadtime_{variable}_{season}_{orog}.csv"
     csv_available = False
@@ -243,6 +260,10 @@ def make_figure(all_dfs, T_arrays, m1_name, m2_name, season, orog,
                     if f"{sc}_fc1" in sub.columns:
                         csv_rows["fc1"][sc] = float(sub[f"{sc}_fc1"].mean())
                         csv_rows["fc2"][sc] = float(sub[f"{sc}_fc2"].mean())
+                        # Significant only if the diff is significant on every
+                        # selected day (conservative when pooling days).
+                        if f"{sc}_is_significant" in sub.columns:
+                            csv_sig[sc] = bool(sub[f"{sc}_is_significant"].all())
         except Exception as e:
             print(f"  Warning reading CSV: {e}")
 
@@ -262,27 +283,36 @@ def make_figure(all_dfs, T_arrays, m1_name, m2_name, season, orog,
                          f"{val:.3f}", ha="center", va="bottom",
                          fontsize=8, color=clr, fontweight="bold")
 
-        # Mark winners per score
+        # Mark winners per score + bootstrap significance of the difference
+        y_top = max(max(csv_rows["fc1"][s], csv_rows["fc2"][s]) for s in sc_names)
         for j, sc in enumerate(sc_names):
             v1 = csv_rows["fc1"][sc]; v2 = csv_rows["fc2"][sc]
             higher_better = sc not in ["FAR", "twMAE"]
             winner = (v2 > v1) if higher_better else (v2 < v1)
             ymax = max(csv_rows["fc1"][sc], csv_rows["fc2"][sc])
-            ax3.annotate("★" if winner else "★",
+            # One star over the winning model's bar (position + colour encode
+            # which model won; the glyph is always a star).
+            ax3.annotate("★",
                          xy=(j + width / 2 + (width if winner else 0), ymax + 0.025),
                          ha="center", fontsize=12,
                          color=C2 if winner else C1)
+            # Significance of the model difference (n.s. → the winner is not robust)
+            marker = _style.significance_marker(csv_sig.get(sc)) if sc in csv_sig else ""
+            if marker:
+                ax3.annotate(marker, xy=(j + width / 2, y_top * 1.10),
+                             ha="center", fontsize=8, style="italic",
+                             color="#333333" if marker.startswith("✓") else "#999999")
 
         # Reference lines for skill scores
-        ax3.axhline(0, color="gray", lw=0.8, ls="--")
+        ax3.axhline(0, color=_style.C_REF, lw=0.8, ls="--")
         ax3.set_xticks(x + width / 2)
         ax3.set_xticklabels(sc_names, fontsize=11)
         ax3.set_ylabel("Score value", fontsize=11)
         ax3.legend(fontsize=10)
-        ax3.set_facecolor("#f8f8f8")
         ax3.set_title(
             f"Pipeline verification scores  ({days_str} averaged)\n"
-            f"ETS/PSS/POD: higher = better  ·  FAR/twMAE: lower = better  ·  ★ = winner",
+            f"ETS/PSS/POD: higher = better  ·  FAR/twMAE: lower = better  ·  "
+            f"★ = winner  ·  ✓ sig. / n.s. = bootstrap significance",
             fontsize=11, fontweight="bold"
         )
 
@@ -321,7 +351,9 @@ def parse_args():
     p.add_argument("--season",      default="JJA")
     p.add_argument("--orog",        default="flat")
     p.add_argument("--days",        nargs="+", type=int, default=[1, 3])
-    p.add_argument("--max-samples", type=int, default=400_000, dest="max_samples")
+    p.add_argument("--max-samples", type=int, default=None, dest="max_samples",
+                   help="Deprecated/ignored — full data is now used so extreme "
+                        "counts are exact (retained for CLI compatibility).")
     p.add_argument("--output-dir",  default="case_study_output/twcrps_diagnostic",
                    dest="output_dir")
     return p.parse_args()
@@ -329,6 +361,7 @@ def parse_args():
 
 def main():
     args   = parse_args()
+    _style.apply_style()
     config = load_config(args.config)
 
     m1_name  = config["read_data"]["forecast_model1"]["name"]
@@ -341,7 +374,22 @@ def main():
     aliases     = {"flat": "flat", "low": "flat", "hilly": "hilly",
                    "mid": "hilly", "complex": "complex", "high": "complex"}
     orog_key    = aliases.get(orog_key, orog_key)
-    orog_range  = tuple(raw_ranges.get(orog_key, (0, 40)))
+    # Fail loudly rather than silently defaulting to (0, 40): a mismatch between
+    # the requested terrain and the config's orography_ranges keys would otherwise
+    # produce a plot filtered to the wrong terrain with no warning.
+    if orog_key in raw_ranges:
+        orog_range = tuple(raw_ranges[orog_key])
+    else:
+        _fallback = {"flat": (0, 40), "hilly": (40, 120), "complex": (120, 3000)}
+        if orog_key not in _fallback:
+            sys.exit(
+                f"ERROR: orography '{args.orog}' → '{orog_key}' not found in config "
+                f"filter.orography_ranges ({list(raw_ranges)}) nor in the built-in "
+                f"fallback ({list(_fallback)}). Use one of flat/low, hilly/mid, complex/high."
+            )
+        orog_range = _fallback[orog_key]
+        print(f"  Note: '{orog_key}' not in config orography_ranges; "
+              f"using built-in fallback {orog_range}")
 
     save_cfg  = config.get("save", {})
     results_dir = save_cfg.get("output_directory", str(parquet_dir))

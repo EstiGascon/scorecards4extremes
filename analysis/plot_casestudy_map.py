@@ -9,16 +9,16 @@ import cartopy.feature as cfeature
 from pathlib import Path
 
 LOCATIONS = [
-    {"lat": 48.055, "lon": 14.132, "label": "Flat inland\n(Linz, Austria)",  "marker": "o", "color": "#1565C0"},
-    {"lat": 45.931, "lon":  7.663, "label": "Mountain top\n(Aosta Alps)",     "marker": "^", "color": "#b71c1c"},
-    {"lat": 46.010, "lon": 11.660, "label": "Alpine valley\n(Adige, Trento)", "marker": "s", "color": "#e65100"},
+    {"lat": 48.210, "lon":  1.680, "label": "Flat inland\n(Paris basin, France — S4440)",   "marker": "o", "color": "#1565C0"},
+    {"lat": 45.930, "lon":  7.880, "label": "Mountain top\n(Monte Rosa, Alps — S7414, 4386m)", "marker": "^", "color": "#b71c1c"},
+    {"lat": 45.920, "lon": 10.880, "label": "Alpine valley\n(Trentino, Alps — S7443, 89m)",     "marker": "s", "color": "#e65100"},
 ]
 
 # annotation offsets (points): positive x = right, positive y = up
 OFFSETS = [
-    ( 55,  15),   # Linz — right
-    (-20,  45),   # Aosta — upper-left
-    ( 55, -25),   # Trento — lower-right
+    ( 55,  15),   # Paris basin — right
+    (-20,  45),   # Monte Rosa — upper-left
+    ( 55, -25),   # Trentino — lower-right
 ]
 
 fig = plt.figure(figsize=(11, 9))
@@ -79,10 +79,10 @@ for loc, (dx, dy) in zip(LOCATIONS, OFFSETS):
     )
     txt.set_path_effects([pe.withStroke(linewidth=3, foreground="white")])
 
-ax.set_title("Case study locations — 2m temperature IFS vs AIFS",
+ax.set_title("Warm-extreme case study locations — 2m temperature IFS vs AIFS",
              fontsize=16, fontweight="bold", pad=12)
 
-out = Path("case_study_output/timeseries/casestudy_map.png")
+out = Path("case_study_output/timeseries_warm_extremes/casestudy_map.png")
 out.parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(out, dpi=180, bbox_inches="tight")
 plt.close(fig)

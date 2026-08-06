@@ -25,9 +25,13 @@ def run_step2(config, paths):
     preprocess_settings = {}
     
     if variable == '2t':
+        apply_correction = cfg.get('lapse_rate_correction', True)
         lapse_rate = cfg.get('lapse_rate', -0.0065)
-        print(f"  → Lapse-rate correction will be applied: {lapse_rate} K/m")
-        preprocess_settings['lapse_rate_correction'] = True
+        if apply_correction:
+            print(f"  → Lapse-rate correction will be applied: {lapse_rate} K/m")
+        else:
+            print(f"  → Lapse-rate correction DISABLED (lapse_rate_correction: false)")
+        preprocess_settings['lapse_rate_correction'] = apply_correction
         preprocess_settings['lapse_rate'] = lapse_rate
     
     elif variable == '10ff':

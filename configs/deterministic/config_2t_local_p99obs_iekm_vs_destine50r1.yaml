@@ -13,7 +13,7 @@ mode: "deterministic"
 forecast_days: [1,2, 3, 4, 5]
 lead_time_frequency: 6
 skip_extraction_if_exists: true
-skip_scoring_if_exists: false
+skip_scoring_if_exists: true
 
 # ============================================================================
 # STEP 1: READ DATA
@@ -137,6 +137,5 @@ save:
 plot:
   heatmap_style: "smooth"
   enabled: true
-  create_heatmap: true
   dpi: 300
   format: "png"

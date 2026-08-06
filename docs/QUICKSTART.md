@@ -110,12 +110,16 @@ Output files appear in `save.output_directory`:
 
 ```
 ./results/my_run/
-├── panel_heatmap_DJF_flat.png     ← 4-panel scorecard (flat terrain, winter)
-├── panel_heatmap_DJF_complex.png  ← 4-panel scorecard (complex terrain, winter)
-├── panel_heatmap_JJA_flat.png
+├── heatmap_smooth_panel_2t_modelA_vs_modelB_DJF.png   ← 4-panel scorecard (winter)
+├── heatmap_smooth_panel_2t_modelA_vs_modelB_JJA.png   ← 4-panel scorecard (summer)
+├── heatmap_smooth_twMAE_2t_modelA_vs_modelB_DJF.png   ← one heatmap per score
 ├── ...
-└── scores_DJF_flat.csv            ← raw score numbers
+└── scores_by_leadtime_2t_DJF_flat.csv                 ← raw score numbers
 ```
+
+> Filenames follow `heatmap_smooth[_<score>]_<variable>_<model1>_vs_<model2>_<season>.<format>`.
+> Terrain classes appear as column groups **within** each figure (not as separate files).
+> With `heatmap_style: "normal"` the `_smooth` part is dropped and figures are blocky rather than interpolated.
 
 Green cells = model 1 better than model 2. Red cells = model 2 better.
 Dotted cells = statistically significant at 95%.
@@ -147,7 +151,7 @@ Then change the `plot:` section and run again:
   --day 3 --season DJF --orog complex
 ```
 
-### Run detailed diagnostics (11-plot set)
+### Run detailed diagnostics (22-plot set)
 
 ```bash
 sbatch submit_diagnose.sh my_run.yaml --day 3 --season DJF --orog complex

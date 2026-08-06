@@ -28,6 +28,9 @@ pyproj==3.7.2
 # ── Data storage ───────────────────────────────────────────────────────────────
 pyarrow==24.0.0
 
+# ── Testing (optional; only needed to run `pytest tests/`) ──────────────────────
+pytest==9.1.1
+
 # ── Utilities ──────────────────────────────────────────────────────────────────
 attrs==26.1.0
 Bottleneck==1.6.0

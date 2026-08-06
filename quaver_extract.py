@@ -177,7 +177,14 @@ def _load_grib(path):
 def _retrieve_orog_for_model(config, model_key, static_mars_kw, local_path):
     """Retrieve surface geopotential (orography) for one model.
 
-    Order: model-specific MARS → IFS static analysis MARS → local GRIB file.
+    Order: model-specific MARS → local per-model GRIB file → IFS static analysis.
+
+    The local per-model file (e.g. aifs_orog.grib) is the correct orography for
+    this model and is tried BEFORE the generic IFS static analysis. This matters
+    for data-driven models such as AIFS (class=ai), which do not archive a surface
+    geopotential in MARS: without this ordering the retrieval would silently fall
+    back to IFS orography and apply an IFS-height lapse-rate correction to the AIFS
+    forecast, biasing results over complex terrain.
     """
     vtb, _ = _load_vtb()
     q = config['read_data'].get(model_key, {}).get('quaver', {})
@@ -206,20 +213,21 @@ def _retrieve_orog_for_model(config, model_key, static_mars_kw, local_path):
         except Exception as e:
             print(f"    orog [{model_key}] model-specific MARS failed ({e})")
 
-    # 2) Operational IFS static analysis.
-    try:
-        fs = vtb.media.mars_retrieve(parameter='z', **static_mars_kw)
-        if fs is not None and len(fs) > 0:
-            print(f"    → orog [{model_key}] retrieved from MARS (IFS static analysis)")
-            return fs
-    except Exception as e:
-        print(f"    orog [{model_key}] IFS-static MARS failed ({e})")
-
-    # 3) Local file fallback.
+    # 2) Local per-model file (correct orography for this model, e.g. aifs_orog.grib).
     fs = _load_grib(local_path)
     if fs is not None:
         print(f"    → orog [{model_key}] loaded from local file {local_path}")
         return fs
+
+    # 3) Operational IFS static analysis (last resort — NOT model-specific).
+    try:
+        fs = vtb.media.mars_retrieve(parameter='z', **static_mars_kw)
+        if fs is not None and len(fs) > 0:
+            print(f"    → orog [{model_key}] retrieved from MARS (IFS static "
+                  f"analysis — WARNING: not model-specific orography)")
+            return fs
+    except Exception as e:
+        print(f"    orog [{model_key}] IFS-static MARS failed ({e})")
 
     print(f"    ⚠ orog [{model_key}] unavailable — lapse-rate correction will not "
           f"use this model's height")
@@ -322,13 +330,34 @@ def _extract_one_date(config, date, step_hours, accum_hours,
         fc1_fs = _retrieve_one_day(config, 'forecast_model1', date, all_fc_steps)
         fc2_fs = _retrieve_one_day(config, 'forecast_model2', date, all_fc_steps)
 
-    # Retrieve observations for all valid times of this date at once.
+    # Retrieve observations ONE VALID TIME PER CALL (not batched) — batching a
+    # date list into a single stvl_retrieve() call makes vtb internally build one
+    # Fieldset per date and then run them through Fieldset.aligned_fieldsets(),
+    # which re-matches stations by [stationID, lat, lon] proximity ACROSS all the
+    # batched dates together. Calling once per date avoids that cross-date
+    # alignment step entirely (matches mars_retrieve.py's per-cycle behaviour for
+    # methods 1/2). Confirmed 2026-08-04 via vtb source (media/stvl.py,
+    # fieldset/fieldset.py) as the cause of a systematic obs-level divergence
+    # between quaver_extract (method 3) and mars_retrieve (methods 1/2).
+    #
+    # IMPORTANT: keep each valid time's Fieldset SEPARATE in a dict (rather than
+    # combining them with vtb.Fieldset(*list)) — that constructor runs its own
+    # alignment/station-ID check across the whole list and intermittently raises
+    # "Only aligned Fieldsets can be appended ... Station IDs differ" whenever
+    # station reporting differs between valid times (common — confirmed
+    # 2026-08-06 as the cause of ~2/3 method3 job failures). Each stvl_retrieve()
+    # call already requests a single date=[vdt], so no further per-step filtering
+    # is needed — just index the dict by vtime directly.
     vdates = sorted({date + pd.to_timedelta(f"{h}h") for h in step_hours})
-    obs_kw = dict(table='observation', parameter=param, date=vdates, sources=sources)
-    if variable == 'tp24':
-        obs_kw['period'] = pd.to_timedelta('24h')
-    obs_fs = vtb.media.stvl_retrieve(**obs_kw)
-    if obs_fs is None or len(obs_fs) == 0:
+    obs_by_vdt = {}
+    for vdt in vdates:
+        obs_kw = dict(table='observation', parameter=param, date=[vdt], sources=sources)
+        if variable == 'tp24':
+            obs_kw['period'] = pd.to_timedelta('24h')
+        fs = vtb.media.stvl_retrieve(**obs_kw)
+        if fs is not None and len(fs) > 0:
+            obs_by_vdt[vdt] = fs
+    if not obs_by_vdt:
         return {}
 
     rows_by_day = {}
@@ -339,10 +368,7 @@ def _extract_one_date(config, date, step_hours, accum_hours,
         forecast_day = step_to_day_map.get(h, _step_to_forecast_day(h))
 
         # Observations valid at this step's validity time.
-        try:
-            obs_step = obs_fs.header_filter(date=vtime)
-        except Exception:
-            continue
+        obs_step = obs_by_vdt.get(vtime)
         if obs_step is None or len(obs_step) == 0:
             continue
 
@@ -465,9 +491,9 @@ def _extract_one_date(config, date, step_hours, accum_hours,
             })
 
     if is_wind:
-        del fc1_u_fs, fc1_v_fs, fc2_u_fs, fc2_v_fs, obs_fs
+        del fc1_u_fs, fc1_v_fs, fc2_u_fs, fc2_v_fs, obs_by_vdt
     else:
-        del fc1_fs, fc2_fs, obs_fs
+        del fc1_fs, fc2_fs, obs_by_vdt
     gc.collect()
     return rows_by_day
 
@@ -761,13 +787,27 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
     fc1 = _retrieve_model('forecast_model1')
     fc2 = _retrieve_model('forecast_model2')
 
-    # Observations for all valid times of this date at once.
+    # Retrieve observations ONE VALID TIME PER CALL (not batched) — see the
+    # matching comment in the deterministic extraction path above for why:
+    # batching a date list into one stvl_retrieve() call triggers vtb's internal
+    # Fieldset.aligned_fieldsets() cross-date station-matching/merging, which a
+    # per-date loop avoids entirely (matches mars_retrieve.py's per-cycle
+    # behaviour for methods 1/2).
+    #
+    # IMPORTANT: keep each valid time's Fieldset SEPARATE in a dict (rather than
+    # combining them with vtb.Fieldset(*list)) — see matching comment in
+    # _extract_one_date above (fixed 2026-08-06: this concatenation intermittently
+    # raised "Only aligned Fieldsets can be appended ... Station IDs differ").
     vdates = sorted({date + pd.to_timedelta(f"{h}h") for h in step_hours})
-    obs_kw = dict(table='observation', parameter=param, date=vdates, sources=sources)
-    if variable == 'tp24':
-        obs_kw['period'] = pd.to_timedelta('24h')
-    obs_fs = vtb.media.stvl_retrieve(**obs_kw)
-    if obs_fs is None or len(obs_fs) == 0:
+    obs_by_vdt = {}
+    for vdt in vdates:
+        obs_kw = dict(table='observation', parameter=param, date=[vdt], sources=sources)
+        if variable == 'tp24':
+            obs_kw['period'] = pd.to_timedelta('24h')
+        fs = vtb.media.stvl_retrieve(**obs_kw)
+        if fs is not None and len(fs) > 0:
+            obs_by_vdt[vdt] = fs
+    if not obs_by_vdt:
         return {}
 
     rows_by_day = {}
@@ -777,10 +817,7 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
         vtime = date + step_td
         forecast_day = step_to_day_map.get(h, _step_to_forecast_day(h))
 
-        try:
-            obs_step = obs_fs.header_filter(date=vtime)
-        except Exception:
-            continue
+        obs_step = obs_by_vdt.get(vtime)
         if obs_step is None or len(obs_step) == 0:
             continue
 
@@ -847,6 +884,21 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
                     for m in fc2_members:
                         fc2_members[m] = fc2_members[m] + corr2
 
+        # Quality cap: flag stations with unrealistic lapse corrections / height
+        # diffs so they are skipped below (mirrors extract_points.py so method3
+        # agrees with the deterministic and method1/2 extractors).
+        cap_ok = np.ones(n, dtype=bool)
+        if is_temperature and need_lapse:
+            max_correction = 50.0      # °C
+            max_height_diff = 10000.0  # m
+            obs_h = np.asarray(elev, dtype=float)
+            if fc1_h is not None and len(fc1_h) == n:
+                hd1 = obs_h - np.asarray(fc1_h, dtype=float)
+                cap_ok &= (np.abs(lapse_rate * hd1) <= max_correction) & (np.abs(hd1) <= max_height_diff)
+            if fc2_h is not None and len(fc2_h) == n:
+                hd2 = obs_h - np.asarray(fc2_h, dtype=float)
+                cap_ok &= (np.abs(lapse_rate * hd2) <= max_correction) & (np.abs(hd2) <= max_height_diff)
+
         date_str = date.strftime('%Y%m%d')
         vtime_str = vtime.strftime('%Y%m%d')
         day_rows = rows_by_day.setdefault(forecast_day, [])
@@ -856,6 +908,8 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
         for i in range(n):
             obs_v = obs_vals[i]
             if obs_v is None or not np.isfinite(obs_v) or abs(obs_v) > 1e30:
+                continue
+            if not cap_ok[i]:
                 continue
             lat_i = float(lats[i])
             lon_i = float(lons[i])
@@ -880,7 +934,7 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
                 row[f'fc2_member_{m}'] = float(arr[i]) if i < len(arr) else np.nan
             day_rows.append(row)
 
-    del fc1, fc2, obs_fs
+    del fc1, fc2, obs_by_vdt
     gc.collect()
     return rows_by_day
 

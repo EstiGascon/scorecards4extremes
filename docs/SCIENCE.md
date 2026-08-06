@@ -284,8 +284,17 @@ For **ensemble** mode, the correction is applied **per member** before any scori
 ### Notes
 
 - The correction removes the smooth-orography bias but not the representativity error due to sub-grid variability (addressed partially through terrain stratification).
-- The correction is only applied for `variable: "2t"` when `lapse_rate_correction: true` is set.
+- The correction is only applied for `variable: "2t"` when `lapse_rate_correction: true` is set. Setting it to `false` disables the correction in both deterministic and ensemble modes.
 - For cold extremes in complex terrain, the uncorrected forecast is systematically too warm (model surface is too low), so the correction shifts forecasts to colder values.
+
+### Quality control of the correction
+
+To guard against unrealistic corrections caused by bad station metadata (e.g. a missing or grossly wrong reported elevation), stations are **dropped** when either:
+
+- $|\Gamma \cdot (z_{\text{obs}} - z_{\text{model}})| > 50$ K (correction magnitude), or
+- $|z_{\text{obs}} - z_{\text{model}}| > 10000$ m (elevation mismatch).
+
+This same cap is applied consistently across all extraction backends (local, MARS/STVL, and quaver) and for both deterministic and ensemble forecasts, so the retained station population is identical regardless of how the data was extracted.
 
 ---
 

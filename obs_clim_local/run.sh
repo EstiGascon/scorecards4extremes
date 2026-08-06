@@ -51,5 +51,37 @@ python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py 2t 0.65 2005 20
 python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py 2t 0.65 2005 2024 11 /home/moeg/scorecards4extremes/obs_clim_local > out_2t_11 2>&1
 python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py 2t 0.65 2005 2024 12 /home/moeg/scorecards4extremes/obs_clim_local > out_2t_12 2>&1
 
+# ============================================================
+# 2-metre maximum temperature (tmax) — 1-day max, 65% min avail
+# ============================================================
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 01 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_01 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 02 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_02 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 03 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_03 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 04 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_04 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 05 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_05 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 06 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_06 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 07 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_07 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 08 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_08 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 09 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_09 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 10 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_10 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 11 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_11 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmax 0.65 2005 2024 12 /home/moeg/scorecards4extremes/obs_clim_local > out_tmax_12 2>&1
+
+# ============================================================
+# 2-metre minimum temperature (tmin) — 1-day min, 65% min avail
+# ============================================================
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 01 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_01 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 02 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_02 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 03 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_03 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 04 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_04 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 05 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_05 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 06 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_06 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 07 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_07 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 08 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_08 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 09 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_09 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 10 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_10 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 11 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_11 2>&1
+python3 /home/moeg/scorecards4extremes/obs_clim_local/obsclim.py tmin 0.65 2005 2024 12 /home/moeg/scorecards4extremes/obs_clim_local > out_tmin_12 2>&1
+
 
 

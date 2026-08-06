@@ -376,25 +376,31 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
 
             valid_dt = current_dt + timedelta(hours=step)
             valid_date_str = valid_dt.strftime('%Y%m%d')
+            # Use the VALID HOUR (not a hardcoded 00Z) so each sub-daily step is
+            # paired with the observation at its own valid time. Mirrors the
+            # deterministic extractor (extract_points.py). Hardcoding "00" here
+            # silently verified every 6-hourly step (06/12/18Z) against the 00Z
+            # observation, corrupting the diurnal signal for all non-00Z steps.
+            valid_hh = valid_dt.strftime('%H')
 
             # Read observation for the valid time
             obs_gpt = None
             if variable == 'tp24':
                 obs_valid_patterns = [
-                    obs_path / f"tp24_obs_{valid_date_str}00.geo",
+                    obs_path / f"tp24_obs_{valid_date_str}{valid_hh}.geo",
                     obs_path / f"tp24_{valid_date_str}.gpt",
                     obs_path / f"tp_{valid_date_str}.gpt",
                     obs_path / f"synop_{valid_date_str}.gpt",
                 ]
             elif variable == '2t':
                 obs_valid_patterns = [
-                    obs_path / f"2t_obs_{valid_date_str}00.geo",
+                    obs_path / f"2t_obs_{valid_date_str}{valid_hh}.geo",
                     obs_path / f"2t_{valid_date_str}.gpt",
                     obs_path / f"synop_{valid_date_str}.gpt",
                 ]
             elif variable == '10ff':
                 obs_valid_patterns = [
-                    obs_path / f"10ff_obs_{valid_date_str}00.geo",
+                    obs_path / f"10ff_obs_{valid_date_str}{valid_hh}.geo",
                     obs_path / f"10ff_{valid_date_str}.gpt",
                     obs_path / f"synop_{valid_date_str}.gpt",
                 ]
@@ -482,6 +488,11 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
                 except Exception:
                     pass
 
+                height_diff_fc1 = np.zeros(n_stations)
+                height_diff_fc2 = np.zeros(n_stations)
+                correction_fc1 = np.zeros(n_stations)
+                correction_fc2 = np.zeros(n_stations)
+
                 if height_field_fc1 is not None:
                     fc1_model_heights = np.array(mv.nearest_gridpoint(height_field_fc1, obs_lats, obs_lons)).flatten()
                     height_diff_fc1 = obs_heights - fc1_model_heights
@@ -495,6 +506,30 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
                     correction_fc2 = lapse_rate * height_diff_fc2
                     for col in fc2_member_values:
                         fc2_member_values[col] = fc2_member_values[col] + correction_fc2
+
+                # Quality cap: drop stations with unrealistic corrections / height
+                # diffs / missing obs heights (mirrors extract_points.py so the
+                # ensemble methods agree with the deterministic extractor).
+                max_correction = 50.0      # °C
+                max_height_diff = 10000.0  # m
+                cap_mask = (
+                    (np.abs(correction_fc1) <= max_correction) &
+                    (np.abs(correction_fc2) <= max_correction) &
+                    (np.abs(height_diff_fc1) <= max_height_diff) &
+                    (np.abs(height_diff_fc2) <= max_height_diff) &
+                    (obs_heights < 9999)
+                )
+                if not cap_mask.all():
+                    keep = np.where(cap_mask)[0]
+                    obs_lats = np.asarray(obs_lats)[keep]
+                    obs_lons = np.asarray(obs_lons)[keep]
+                    obs_values = np.asarray(obs_values)[keep]
+                    obs_ids = [obs_ids[i] for i in keep]
+                    n_stations = len(keep)
+                    for col in fc1_member_values:
+                        fc1_member_values[col] = fc1_member_values[col][keep]
+                    for col in fc2_member_values:
+                        fc2_member_values[col] = fc2_member_values[col][keep]
 
             # Deaccumulate: tp_Nh = tp[step] - tp[step - accum_hours]
             if need_deaccum and step > accum_hours:

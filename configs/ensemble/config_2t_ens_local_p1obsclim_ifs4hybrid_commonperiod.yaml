@@ -17,6 +17,7 @@ start_date: "2025-11-03"
 end_date: "2026-03-05"
 mode: "ensemble"
 steps: [12, 24, 36, 48, 60, 72, 84, 96, 108, 120, 132, 144, 156, 168, 180, 192, 204, 216, 228, 240]
+lead_time_frequency: 12
 skip_extraction_if_exists: true
 skip_scoring_if_exists: false
 
@@ -152,6 +153,5 @@ save:
 plot:
   heatmap_style: "smooth"
   enabled: true
-  create_heatmap: true
   dpi: 300
   format: "png"

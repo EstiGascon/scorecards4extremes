@@ -163,8 +163,12 @@ save:
 # STEP 9: PLOT
 # ============================================================================
 plot:
-  enabled: true
-  create_heatmap: true
-  heatmap_style: "smooth"
-  dpi: 150
-  format: "png"
+  enabled: true                # master switch for Step 9 (false = skip all plotting)
+  heatmap_style: "smooth"      # "smooth" = interpolated heatmaps + a 4-score panel figure;
+                               # "normal" = discrete blocky heatmaps (one per score)
+  create_summary: true         # also draw the multi-panel summary figure
+                               # (single-condition runs only; auto-skipped when re-plotting
+                               #  from saved CSVs because raw pairs aren't reloaded)
+  dpi: 150                     # output resolution in dots-per-inch
+  format: "png"                # output file type: png | pdf | svg
+  # forecast_days: [1, 3, 5]   # optional: restrict heatmaps to these lead days (default: all scored days)

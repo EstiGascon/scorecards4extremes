@@ -205,11 +205,16 @@ def load_extracted_data(variable, point_data_path, start_date, end_date, steps, 
         return df
 
 
-def apply_lapse_rate_correction(data, lapse_rate=-0.0065):
+def apply_lapse_rate_correction(data, lapse_rate=-0.0065,
+                                max_correction=50.0, max_height_diff=10000.0):
     """Apply lapse-rate correction to temperature data for BOTH models.
     
     Formula: T_corrected = T_model + lapse_rate * (obs_height - model_height)
     With lapse_rate = -0.0065 K/m: if station is higher → forecast cools down.
+
+    Rows whose correction magnitude exceeds ``max_correction`` (°C) or whose
+    height difference exceeds ``max_height_diff`` (m) are dropped, mirroring the
+    extraction-time quality cap in extract_points.py so every method agrees.
     """
     # Remove rows with missing/invalid station elevations
     if 'obs_height' in data.columns:
@@ -222,6 +227,23 @@ def apply_lapse_rate_correction(data, lapse_rate=-0.0065):
     # Each model has its own height field
     height_diff_fc1 = data['obs_height'] - data['fc1_height']
     height_diff_fc2 = data['obs_height'] - data['fc2_height']
+
+    # Quality cap: drop stations with unrealistic corrections / height diffs
+    # (matches extract_points.py so deterministic method3 agrees with method1/2).
+    cap_mask = (
+        ((lapse_rate * height_diff_fc1).abs() <= max_correction) &
+        ((lapse_rate * height_diff_fc2).abs() <= max_correction) &
+        (height_diff_fc1.abs() <= max_height_diff) &
+        (height_diff_fc2.abs() <= max_height_diff)
+    )
+    n_capped = int((~cap_mask).sum())
+    if n_capped > 0:
+        data = data[cap_mask].copy()
+        height_diff_fc1 = data['obs_height'] - data['fc1_height']
+        height_diff_fc2 = data['obs_height'] - data['fc2_height']
+        print(f"  Removed {n_capped} rows with extreme lapse corrections "
+              f"(>{max_correction}°C) or height differences (>{max_height_diff}m)")
+
     data['fc1_value_uncorrected'] = data['fc1_value'].copy()
     data['fc2_value_uncorrected'] = data['fc2_value'].copy()
     data['fc1_value'] = data['fc1_value'] + lapse_rate * height_diff_fc1
@@ -275,9 +297,10 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
     
     # Check if lapse-rate correction was already applied during extraction
     has_uncorrected_columns = 'fc1_value_uncorrected' in data.columns
-    
-    # Always apply lapse-rate correction for 2t
-    if config['variable'] == '2t':
+
+    # Apply lapse-rate correction for 2t, if enabled in config
+    apply_lapse = preprocess_settings.get('lapse_rate_correction', True)
+    if config['variable'] == '2t' and apply_lapse:
         if has_uncorrected_columns:
             print(f"  ⚠️  Note: Lapse-rate correction already applied during extraction (Step 3)")
             print(f"     Skipping to avoid double-correction. Heights stored: fc1_height, fc2_height.")
@@ -287,6 +310,8 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
             print(f"  Applied lapse-rate correction ({lapse_rate} K/m) to both models")
         else:
             print(f"  ⚠️  Lapse-rate correction skipped: missing height columns (fc1_height/obs_height)")
+    elif config['variable'] == '2t' and not apply_lapse:
+        print(f"  Lapse-rate correction disabled in config (lapse_rate_correction: false); using raw model heights")
     
     print(f"\n  Initial dataset: {len(data)} rows")
     print(f"    Unique stations: {data['station_id'].nunique()}")

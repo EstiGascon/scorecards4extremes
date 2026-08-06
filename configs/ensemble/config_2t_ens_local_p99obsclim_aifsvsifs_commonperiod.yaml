@@ -6,7 +6,9 @@
 # continuous block shared by BOTH the hybrid-ensemble and AIFS-ensemble
 # datasets, chosen so hybrid-vs-ifs and aifs-vs-ifs results are directly
 # comparable over identical dates.
-# Steps: 6h to 240h (6-hourly)
+# Steps: 12h to 240h (12-hourly) — downgraded from native 6-hourly to match the
+# hybrid_ens/ifs_ens4hybrid pair (12-hourly only on disk), so both commonperiod
+# runs use the same lead-time frequency for a like-for-like comparison.
 # Threshold: per-station p99 from local obs climatology
 # Whole period together (no season split) — stratified by lead time and
 # orography only.
@@ -16,7 +18,8 @@ variable: "2t"
 start_date: "2025-11-03"
 end_date: "2026-03-05"
 mode: "ensemble"
-steps: [6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90, 96, 102, 108, 114, 120, 126, 132, 138, 144, 150, 156, 162, 168, 174, 180, 186, 192, 198, 204, 210, 216, 222, 228, 234, 240]
+steps: [12, 24, 36, 48, 60, 72, 84, 96, 108, 120, 132, 144, 156, 168, 180, 192, 204, 216, 228, 240]
+lead_time_frequency: 12
 skip_extraction_if_exists: true
 skip_scoring_if_exists: false
 
@@ -151,6 +154,5 @@ save:
 plot:
   heatmap_style: "smooth"
   enabled: true
-  create_heatmap: true
   dpi: 300
   format: "png"

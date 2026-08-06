@@ -34,6 +34,9 @@ import pyarrow.parquet as pq
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for the sibling _style module
+import _style
+
 
 def _find_parquet_files(data_dir, forecast_day=None):
     files = sorted(glob.glob(os.path.join(data_dir, "*.parquet")))
@@ -238,6 +241,11 @@ def compute_station_stats_det(files, threshold, event_type, batch_size=500_000, 
 
     print(f"  Processed {total_rows:,} rows in {len(partials)} batches")
 
+    if not partials:
+        print("ERROR: no rows survived filtering (did --area exclude every station, "
+              "or are all obs_value NaN?). Nothing to plot.")
+        sys.exit(1)
+
     # Reduce: sum all accumulated counters per station
     all_p = pd.concat(partials, ignore_index=True)
     sum_cols = [c for c in all_p.columns if c not in ("_loc", "lat", "lon")]
@@ -311,6 +319,11 @@ def plot_map(stats, col, title, output_path, cmap="RdBu_r", vmin=None, vmax=None
     vals = stats[col].values
     valid = ~np.isnan(vals)
 
+    if not valid.any():
+        print(f"  [WARN] '{col}': all values are NaN — skipping {output_path}")
+        plt.close(fig)
+        return
+
     if symmetric and vmin is None:
         vmax_abs = np.nanpercentile(np.abs(vals[valid]), 95)
         vmin, vmax = -vmax_abs, vmax_abs
@@ -360,6 +373,7 @@ def main():
     )
     args = parser.parse_args()
 
+    _style.apply_style(save_dpi=200)
     os.makedirs(args.output_dir, exist_ok=True)
     units = {"2t": "°C", "10ff": "m/s", "tp24": "mm"}.get(args.variable, "")
 

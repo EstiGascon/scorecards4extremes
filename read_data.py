@@ -31,6 +31,16 @@ def _resolve_forecast_source(cfg_model, model_label, config):
         import mars_retrieve
         mars_cfg = cfg_model['mars']
         steps, _ = _compute_steps(config)
+        # For accumulated variables (tp24/tp), extract_points.py de-accumulates
+        # via tp[step] - tp[step - accumulation_hours] (step 24 is the sole
+        # exception, used directly). MARS must ALSO retrieve those
+        # (step - accum_hours) support steps, otherwise only the first lead
+        # time of each forecast_days group succeeds and later ones silently
+        # fail (missing field -> fieldset minus nil).
+        accum_hours = config.get('preprocess', {}).get('precipitation_accumulation_hours')
+        if accum_hours and config['variable'] in ('tp24', 'tp'):
+            extra = {s - accum_hours for s in steps if s - accum_hours > 0}
+            steps = sorted(set(steps) | extra)
         print(f"  MARS class={mars_cfg.get('class')}, type={mars_cfg.get('type')}, "
               f"stream={mars_cfg.get('stream')}, expver={mars_cfg.get('expver')}")
         target_dir = mars_retrieve.retrieve_forecast(
