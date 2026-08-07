@@ -1,0 +1,118 @@
+# ============================================================================
+# CAMS AOD500 — oper vs icki, deterministic, fixed threshold 0.2
+# ============================================================================
+# First CAMS test: score pre-aligned AOD500 point-parquet through the standard
+# pipeline. Step 3 (Metview GRIB extraction) is SKIPPED — the pipeline reads the
+# colleague's pre-aligned parquet directly.
+#
+# Parquet files (day-partitioned, pipeline schema):
+#   /home/ecm7338/scorecards4extremes/cams_sample_data/aligned_aod_oper_icki/
+#     aod500_oper_vs_icki_day{1..5}.parquet
+# ============================================================================
+
+variable: "aod500"          # drives the parquet filename glob: aod500_oper_vs_icki_day*.parquet
+start_date: "2025-01-01"
+end_date:   "2025-12-31"
+mode: "deterministic"
+forecast_days: [1, 2, 3, 4, 5]     # steps 3..120 h -> days 1..5
+lead_time_frequency: 3             # AOD steps are 3-hourly (3,6,...,120); keep all
+skip_extraction_if_exists: true    # <-- read the pre-aligned parquet, skip Step 3
+skip_scoring_if_exists:    false
+
+# ============================================================================
+# STEP 1: READ DATA
+# ============================================================================
+# Extraction is skipped, but Step 1 still validates that the configured paths
+# exist. Point them at the (existing) parquet directory; contents are unused.
+read_data:
+  forecast_model1:
+    name: "oper"                   # MUST match token in aod500_oper_vs_icki_day*.parquet
+    source: "local_grib"
+    local_grib:
+      path: "/home/ecm7338/scorecards4extremes/cams_sample_data/aligned_aod_oper_icki"
+  forecast_model2:
+    name: "icki"                   # MUST match the second token
+    source: "local_grib"
+    local_grib:
+      path: "/home/ecm7338/scorecards4extremes/cams_sample_data/aligned_aod_oper_icki"
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/home/ecm7338/scorecards4extremes/cams_sample_data/aligned_aod_oper_icki"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS  (all off — AOD is a plain scalar, already in obs units)
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false       # AOD has no elevation lapse (and no orog columns)
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA  (skipped; output_path points at the parquet dir)
+# ============================================================================
+extract_points:
+  output_path: "/home/ecm7338/scorecards4extremes/cams_sample_data/aligned_aod_oper_icki"
+  save_format: "pandas"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: "all"
+  orography_type: "all"              # parquet has no 'sdfor' column -> no terrain stratification
+  remove_coastal_stations: false     # parquet has no 'lsm' column
+  remove_outliers: false             # AOD is right-skewed; do NOT strip real extremes
+
+# ============================================================================
+# STEP 5: THRESHOLD  (fixed 0.2, high-AOD extremes)
+# ============================================================================
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 0.2
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+    - "correlation"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE
+# ============================================================================
+save:
+  output_directory: "./results/aod500_oper_vs_icki_fixed0.2"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  enabled: true
+  heatmap_style: "smooth"
+  create_summary: true
+  dpi: 150
+  format: "png"

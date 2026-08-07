@@ -114,6 +114,42 @@ def _make_bounds(limit):
     return sorted([-f * limit for f in fracs]) + sorted([f * limit for f in fracs])
 
 
+_AREA_DISPLAY_NAMES = {
+    'europe': 'Europe',
+    'nh_extratropics': 'NH Extratropics',
+    'tropics': 'Tropics',
+    'north_america': 'North America',
+}
+
+
+def _area_title_suffix(config):
+    """Return a ' — <Area>' suffix for plot titles from the configured area, or ''.
+
+    Prefers filter.area (applied to loaded data); falls back to extract_points.area.
+    """
+    if not config:
+        return ''
+    area = (config.get('filter', {}) or {}).get('area') \
+        or (config.get('extract_points', {}) or {}).get('area')
+    if not area:
+        return ''
+    if isinstance(area, (list, tuple)):
+        return ' — custom area'
+    return f" — {_AREA_DISPLAY_NAMES.get(area, str(area))}"
+
+
+def _blank_if_all(value):
+    """Return '' for an unfiltered condition dimension ('all'/'null'/None), else str(value).
+
+    Used so scorecards omit a label when there is no specific filter for that
+    dimension (e.g. no season split, or no orography stratification).
+    """
+    if value is None:
+        return ''
+    s = str(value)
+    return '' if s.strip().lower() in ('all', 'null', '') else s
+
+
 def _detect_plottable_scores(by_leadtime_df):
     """Detect which scores are available in a by_leadtime DataFrame."""
     available = []
@@ -305,11 +341,11 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
     ax.set_ylabel("Forecast Period", fontsize=11)
     
     # Title
-    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation'}
+    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm'}
     var_display = var_display_map.get(variable, variable)
     orog_title = f" ({orog_type.upper()} terrain)" if orog_type else ""
     score_display = _SCORE_DISPLAY_NAMES.get(score_type, score_type.upper())
-    title = f"{score_display} - {var_display} - Threshold: {threshold_value:.1f}{unit} (as %){orog_title}"
+    title = f"{score_display} - {var_display} - Threshold: {threshold_value:.1f}{unit} (as %){orog_title}{_area_title_suffix(config)}"
     plt.title(title, fontsize=12, pad=15)
     
     plt.tight_layout()
@@ -461,8 +497,8 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
     orog_labels = []
     season_labels = []
     for r in all_results:
-        season_labels.append(r.get('season', '') or '')
-        orog_labels.append(r['orog_type'].upper() if r['orog_type'] else 'ALL')
+        season_labels.append(_blank_if_all(r.get('season')))
+        orog_labels.append(_blank_if_all(r['orog_type']).upper())
     
     # Get lead times from first result (should be same for all)
     lead_times = sorted(all_results[0]['results']['by_leadtime']['lead_time'].unique())
@@ -653,10 +689,10 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
     # (Already done in loop above)
     
     # Overall title
-    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation'}
+    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm'}
     var_display = var_display_map.get(variable, variable)
     # If season is None, it means we're showing all seasons in columns
-    season_title = f" - {season}" if season and season.lower() != 'null' else ""
+    season_title = f" - {season}" if _blank_if_all(season) else ""
     
     # Add threshold info to title
     units = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm'}
@@ -676,7 +712,7 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
         if thr_val is not None and not (isinstance(thr_val, float) and np.isnan(thr_val)):
             threshold_info = f" - thr: {thr_val:.1f}{unit}"
 
-    title = f"{_SCORE_DISPLAY_NAMES.get(score_type, score_type.upper())} - {var_display}{season_title}{threshold_info} (as %)\n{model_names['fc1_name']} vs {model_names['fc2_name']}"
+    title = f"{_SCORE_DISPLAY_NAMES.get(score_type, score_type.upper())} - {var_display}{season_title}{threshold_info} (as %)\n{model_names['fc1_name']} vs {model_names['fc2_name']}{_area_title_suffix(config)}"
     plt.suptitle(title, fontsize=title_fontsize, fontweight='bold', y=1.05)  # Even higher to clear labels
     
     # Save (constrained_layout handles spacing automatically, no need for tight_layout)
@@ -719,8 +755,8 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
     orog_labels = []
     season_labels = []
     for r in all_results:
-        season_labels.append(r.get('season', '') or '')
-        orog_labels.append(r['orog_type'].upper() if r['orog_type'] else 'ALL')
+        season_labels.append(_blank_if_all(r.get('season')))
+        orog_labels.append(_blank_if_all(r['orog_type']).upper())
 
     lead_times = sorted(all_results[0]['results']['by_leadtime']['lead_time'].unique())
     has_forecast_day = 'forecast_day' in all_results[0]['results']['by_leadtime'].columns
@@ -948,9 +984,9 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
             ax.axvline(x=i - 0.5, ymin=0, ymax=1, color='white', linewidth=2, zorder=1000)
 
     # ---- Title ----
-    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation'}
+    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm'}
     var_display = var_display_map.get(variable, variable)
-    season_title = f" - {season}" if season and season.lower() != 'null' else ""
+    season_title = f" - {season}" if _blank_if_all(season) else ""
 
     units = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm'}
     unit = units.get(variable, '')
@@ -977,7 +1013,7 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
             threshold_info = f" - thr: {thr_val:.1f}{unit}"
 
     title = (f"{_SCORE_DISPLAY_NAMES.get(score_type, score_type.upper())} - {var_display}{season_title}{threshold_info} (as %)\n"
-             f"{model_names['fc1_name']} vs {model_names['fc2_name']}")
+             f"{model_names['fc1_name']} vs {model_names['fc2_name']}{_area_title_suffix(config)}")
     plt.suptitle(title, fontsize=title_fontsize, fontweight='bold', y=1.05)
 
     # ---- Save ----
@@ -1063,8 +1099,8 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
     num_rows       = len(lead_times)
     num_cols       = len(all_results)
     has_fd         = 'forecast_day' in all_results[0]['results']['by_leadtime'].columns
-    orog_labels    = [r['orog_type'].upper() if r['orog_type'] else 'ALL' for r in all_results]
-    season_labels  = [r.get('season', '') or '' for r in all_results]
+    orog_labels    = [_blank_if_all(r['orog_type']).upper() for r in all_results]
+    season_labels  = [_blank_if_all(r.get('season')) for r in all_results]
 
     if has_fd:
         first_rlt  = all_results[0]['results']['by_leadtime']
@@ -1228,7 +1264,7 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
                      fontsize=label_fs + 1, fontweight='bold', pad=16)
 
     # Overall title
-    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation'}
+    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm'}
     var_display = var_display_map.get(variable, variable)
     units_map   = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm'}
 
@@ -1248,7 +1284,7 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
                 threshold_info = f' — thr: {tv:.1f}{u}'
 
     fig.suptitle(
-        f'{var_display}{threshold_info}\n{model_names["fc1_name"]} vs {model_names["fc2_name"]}',
+        f'{var_display}{threshold_info}\n{model_names["fc1_name"]} vs {model_names["fc2_name"]}{_area_title_suffix(config)}',
         fontsize=10, fontweight='bold', y=1.01,
     )
 
@@ -1281,6 +1317,12 @@ def run_step9(config, data_or_results, threshold_value, output_dir, model_names,
     
     # Determine if we have single or multiple results
     heatmap_style = cfg.get('heatmap_style', 'normal')
+
+    # For the smooth style, render even a single condition (e.g. one season or a
+    # region not split by season) through the multi-column smooth path so it gets
+    # the same continuous-gradient scorecard (one column) plus the 2×2 panel.
+    if heatmap_style == 'smooth' and isinstance(data_or_results, dict):
+        data_or_results = [data_or_results]
 
     if isinstance(data_or_results, list):
         # Multiple orography types - create multi-column heatmaps
