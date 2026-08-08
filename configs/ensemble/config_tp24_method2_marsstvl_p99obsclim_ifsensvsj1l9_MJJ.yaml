@@ -1,0 +1,177 @@
+# ============================================================================
+# ENSEMBLE — METHOD 2 (MARS + STVL) — tp24 heavy precip extremes (p99), MJJ
+# ============================================================================
+# NEW EXPERIMENT: expver=j1l9 (class=rd, stream=enfo) vs operational IFS-ENS
+# (class=od, expver=1). Both 50 perturbed members + control (51 total).
+#
+# Evaluated model  : IFS-ENS operational (ifs_ens_oper, class=od)  forecast_model1
+# Reference model  : j1l9 research ENS   (j1l9_ens,    class=rd)   forecast_model2
+#
+# j1l9 assumed to run on the SAME grid/resolution as the operational IFS-ENS
+# (tco1279) — reuses lsm_tco1279.grib / orog_tco1279.grib for both models.
+# Cycle 50r1 (12 May 2026) control-member archiving change (class=od control
+# -> stream=oper/type=fc) is handled automatically by mars_retrieve.py's
+# _ens_control_stream_type (this period is entirely post-50r1).
+#
+# Period: 2026-05-13 to 2026-08-02, single season "MJJ" (May-Jun-Jul; the
+# trailing Aug 1-2 days are naturally excluded by the season filter).
+# Steps: 24-hourly out to day 10 (240h) — tp24 is a discrete 24h accumulation,
+# no sub-daily aggregation needed. read_data.py automatically adds the
+# (step - 24h) support steps needed to de-accumulate tp24 from raw tp.
+# Threshold: per-station p99 from local obs climatology (heavy precip).
+# ============================================================================
+
+variable: "tp24"
+start_date: "2026-05-13"
+end_date: "2026-08-02"
+mode: "ensemble"
+backend: "local"
+steps: [24, 48, 72, 96, 120, 144, 168, 192, 216, 240]
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# ENSEMBLE SETTINGS
+# ============================================================================
+ensemble:
+  n_members: 50
+  include_control: true
+
+# ============================================================================
+# STEP 1: READ DATA — retrieve ENS from MARS (forecasts) + STVL (obs)
+# ============================================================================
+read_data:
+  forecast_model1:                       # operational IFS-ENS (reference)
+    name: "ifs_ens_oper"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: od
+      stream: enfo
+      expver: "1"
+      levtype: sfc
+      time: "00"
+      number: "1/to/50"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast_ENS/raw"
+      # database: fdb                    # uncomment if MARS reports "not found"
+
+  forecast_model2:                       # j1l9 research ENS (evaluated)
+    name: "j1l9_ens"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: rd
+      stream: enfo
+      expver: "j1l9"
+      levtype: sfc
+      time: "00"
+      number: "1/to/50"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast_ENS/raw"
+      # database: fdb                    # uncomment if MARS reports "not found"
+
+  observation_source: "stvl"
+  stvl:
+    sources: ["synop", "hdobs"]
+    base_path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_method2_marsstvl_p99obsclim_ifsensvsj1l9_MJJ"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS (sdfor / lsm / orography — same grid for both models)
+# ============================================================================
+auxiliary_fields:
+  model1:                                # IFS-ENS operational
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/orog_tco1279.grib"
+  model2:                                # j1l9 (same grid as operational)
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/orog_tco1279.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — MJJ season, orography split
+# ============================================================================
+filter:
+  lead_times: null
+  season: "MJJ"
+  orography_type: ["low", "mid", "high"]
+  orography_ranges:
+    low:  [0, 40]
+    mid:  [40, 120]
+    high: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: true
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "tp"
+    percentile: 99
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+
+# ============================================================================
+# STEP 6: SCORES (ensemble)
+# ============================================================================
+scores:
+  ensemble:
+    - "twCRPS"
+    - "fCRPS"
+    - "Brier"
+    - "BSS"
+    - "tw_quantile_score"
+    - "tw_quantile_score_q090"
+    - "tw_quantile_score_q095"
+    - "tw_quantile_score_q099"
+    - "extreme_spread_skill_ratio"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 500
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_method2_marsstvl_p99obsclim_ifsensvsj1l9_MJJ"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"

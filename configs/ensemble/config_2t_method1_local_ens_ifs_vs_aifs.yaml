@@ -1,0 +1,151 @@
+# ============================================================================
+# ENSEMBLE — METHOD 1 of 3 — LOCAL GRIB (pre-staged forecasts) + local obs
+# ============================================================================
+# 2t cold extremes (< 0 °C), Europe. ENSEMBLE (50 perturbed + control).
+# Evaluated model : IFS-ENS  (ifsens4aifs, class=od stream=enfo)  forecast_model1
+# Reference model : AIFS-ENS (aifs_ens,   class=ai stream=enfo)   forecast_model2
+#
+# These are the AIFS-ENS vs IFS-ENS pair recently used in this tool (same models
+# as methods 2 and 3). Uses pre-staged local GRIB files at native model
+# resolution.
+#
+# Validation window: 2 weeks of the AIFS/IFS common period (extend end_date to
+# 2026-03-05 for the full comparison).
+#
+# Extraction: source=local_grib / observation_source=local_gpt, backend=local.
+# Reads pre-staged forecast + obs files (no MARS/STVL retrieval).
+# ============================================================================
+
+variable: "2t"
+start_date: "2025-11-03"
+end_date: "2025-11-16"
+mode: "ensemble"
+backend: "local"
+steps: [6, 12, 18, 24, 54, 60, 66, 72, 102, 108, 114, 120]
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# ENSEMBLE SETTINGS
+# ============================================================================
+ensemble:
+  n_members: 50
+  include_control: true
+
+# ============================================================================
+# STEP 1: READ DATA — pre-staged local GRIB (native resolution)
+# ============================================================================
+read_data:
+  forecast_model1:                       # IFS-ENS (reference)
+    name: "ifsens4aifs"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast_ENS/raw/ifsens4aifs"
+
+  forecast_model2:                       # AIFS-ENS (evaluated)
+    name: "aifs_ens"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast_ENS/raw/aifs_ens"
+
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/2mtemp/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: true
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/2t_method1_local_ens_ifs_vs_aifs"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS (sdfor / lsm / per-model orography)
+# ============================================================================
+auxiliary_fields:
+  model1:                                # IFS-ENS
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/orog_tco1279.grib"
+  model2:                                # AIFS-ENS
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/aifs_lsm.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/aifs_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — no season split, orography split only
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["low", "mid", "high"]
+  orography_ranges:
+    low:  [0, 40]
+    mid:  [40, 120]
+    high: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: false
+  min_valid_temperature: -60.0
+  max_valid_temperature: 60.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — fixed 0 °C (cold extreme, below)
+# ============================================================================
+threshold:
+  method: "fixed"
+  event_type: "below"
+  fixed:
+    value: 0.0
+    event_type: "below"
+
+# ============================================================================
+# STEP 6: SCORES (ensemble)
+# ============================================================================
+scores:
+  ensemble:
+    - "twCRPS"
+    - "fCRPS"
+    - "twMAE"
+    - "Brier"
+    - "BSS"
+    - "quantile_score"
+    - "extreme_spread_skill_ratio"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/2t_method1_local_ens_ifs_vs_aifs"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"

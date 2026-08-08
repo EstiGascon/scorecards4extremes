@@ -96,6 +96,15 @@ ZOOM_REGIONS = {
     "uk":             (-11,  3,  49, 61),
     "de_pl_cz":       (  5, 25,  47, 56),
     "central_europe": (  2, 26,  43, 59),  # BeNeLux, DE, PL, S.Scandinavia, CZ, HR, RS, HU
+    "conus":          (-125, -65, 20, 50),  # continental US — CAMS AirNow (go3/pm2p5) stations
+}
+
+# Predefined geographic areas [North, West, South, East] — MUST mirror filter.py.
+# Used for data-level filtering only (NOT the map extent, which is set via --zoom).
+AREAS = {
+    "europe":          [68, -15, 27, 50],
+    "nh_extratropics": [90, -180, 20, 180],
+    "tropics":         [20, -180, -20, 180],
 }
 
 # Active extent — overridden at startup when --zoom is passed
@@ -178,6 +187,15 @@ def load_date_slice(config: dict, date_str: str, day: int,
     df = df[df["date"].astype(str) == str(date_str)]
     if df.empty:
         raise ValueError(f"Date {date_str} not found in day-{day} parquet")
+    # Geographic area filter (config-driven, mirrors filter.py)
+    area_name = config.get("filter", {}).get("area")
+    if area_name:
+        if area_name in AREAS:
+            lat_north, lon_west, lat_south, lon_east = AREAS[area_name]
+            df = df[(df["lat"] >= lat_south) & (df["lat"] <= lat_north) &
+                    (df["lon"] >= lon_west) & (df["lon"] <= lon_east)]
+        else:
+            print(f"  Warning: Unknown area '{area_name}', skipping area filter")
     # Season filter
     if season:
         month_map = {"DJF": {12,1,2}, "MAM": {3,4,5},

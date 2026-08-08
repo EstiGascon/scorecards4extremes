@@ -26,9 +26,12 @@ import _style
 # ============================================================================
 
 VARIABLE_LABELS = {
-    "2t":   ("2m Temperature",     "°C"),
-    "10ff": ("10m Wind Speed",     "m/s"),
-    "tp24": ("24h Precipitation",  "mm"),
+    "2t":     ("2m Temperature",     "°C"),
+    "10ff":   ("10m Wind Speed",     "m/s"),
+    "tp24":   ("24h Precipitation",  "mm"),
+    "aod500": ("AOD 500 nm",         ""),
+    "go3":    ("Ozone (O3)",         "ppb"),
+    "pm2p5":  ("PM2.5",              "µg/m³"),
 }
 
 SEASON_MONTHS = {
@@ -41,6 +44,13 @@ OROGRAPHY_RANGES = {
     "flat": (0, 40), "low": (0, 40),
     "hilly": (40, 120), "mid": (40, 120),
     "complex": (120, 3000), "high": (120, 3000),
+}
+
+# Predefined geographic areas [North, West, South, East] — MUST mirror filter.py
+AREAS = {
+    "europe":          [68, -15, 27, 50],
+    "nh_extratropics": [90, -180, 20, 180],
+    "tropics":         [20, -180, -20, 180],
 }
 
 # Shared colourblind-safe palette (see diagnostics/_style.py)
@@ -84,6 +94,17 @@ def load_day(config, day):
 
 def filter_data(df, config, season=None, orog=None):
     """Apply date/season/orog/QC filters."""
+    area_name = config.get("filter", {}).get("area")
+    if area_name:
+        if area_name in AREAS:
+            lat_north, lon_west, lat_south, lon_east = AREAS[area_name]
+            before = len(df)
+            df = df[(df["lat"] >= lat_south) & (df["lat"] <= lat_north) &
+                    (df["lon"] >= lon_west) & (df["lon"] <= lon_east)]
+            print(f"  Area filter ({area_name}): {len(df):,} rows (removed {before - len(df):,})")
+        else:
+            print(f"  Warning: Unknown area '{area_name}', skipping area filter")
+
     sd = config.get("start_date", "")
     ed = config.get("end_date", "")
     if sd and ed:

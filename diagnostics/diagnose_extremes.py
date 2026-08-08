@@ -78,9 +78,12 @@ OUTPUT_PATH = None   # set in main()
 # ============================================================================
 
 VARIABLE_LABELS = {
-    "2t":   ("2m Temperature",     "°C"),
-    "10ff": ("10m Wind Speed",     "m/s"),
-    "tp24": ("24h Precipitation",  "mm"),
+    "2t":     ("2m Temperature",     "°C"),
+    "10ff":   ("10m Wind Speed",     "m/s"),
+    "tp24":   ("24h Precipitation",  "mm"),
+    "aod500": ("AOD 500 nm",         ""),
+    "go3":    ("Ozone (O3)",         "ppb"),
+    "pm2p5":  ("PM2.5",              "µg/m³"),
 }
 
 SEASON_MONTHS = {
@@ -96,6 +99,13 @@ OROGRAPHY_RANGES = {
     "mid":     (40,  120),
     "complex": (120, 3000),
     "high":    (120, 3000),
+}
+
+# Predefined geographic areas [North, West, South, East] — MUST mirror filter.py
+AREAS = {
+    "europe":          [68, -15, 27, 50],
+    "nh_extratropics": [90, -180, 20, 180],
+    "tropics":         [20, -180, -20, 180],
 }
 
 # ============================================================================
@@ -196,6 +206,18 @@ def filter_data(df, config, season=None, orog=None):
 
     cfg = config.get("filter", {})
     var = config.get("variable", "")
+
+    # ── Geographic area ───────────────────────────────────────────────────────
+    area_name = cfg.get("area")
+    if area_name:
+        if area_name in AREAS:
+            lat_north, lon_west, lat_south, lon_east = AREAS[area_name]
+            before = len(df)
+            df = df[(df["lat"] >= lat_south) & (df["lat"] <= lat_north) &
+                    (df["lon"] >= lon_west) & (df["lon"] <= lon_east)]
+            print(f"  Area filter ({area_name}): {len(df):,} rows (removed {before - len(df):,})")
+        else:
+            print(f"  Warning: Unknown area '{area_name}', skipping area filter")
 
     # ── Date range ────────────────────────────────────────────────────────────
     sd = config.get("start_date", "")
@@ -322,6 +344,15 @@ def get_threshold_range_and_labels(condition, obs_data):
         elif var_short == "10ff":
             thresholds = np.linspace(max(0.1, fixed_threshold - 5), fixed_threshold + 10, 15)
             labels = [f"{t:.1f}m/s" for t in thresholds]; units = "m/s"
+        elif var_short == "aod500":
+            thresholds = np.linspace(max(0.0, fixed_threshold - 0.3), fixed_threshold + 0.5, 15)
+            labels = [f"{t:.2f}" for t in thresholds]; units = ""
+        elif var_short == "go3":
+            thresholds = np.linspace(max(0.1, fixed_threshold - 20), fixed_threshold + 30, 15)
+            labels = [f"{t:.1f}ppb" for t in thresholds]; units = "ppb"
+        elif var_short == "pm2p5":
+            thresholds = np.linspace(max(0.1, fixed_threshold - 20), fixed_threshold + 30, 15)
+            labels = [f"{t:.1f}µg/m³" for t in thresholds]; units = "µg/m³"
         else:
             thresholds = np.linspace(fixed_threshold - 10, fixed_threshold + 10, 15)
             labels = [f"{t:.1f}" for t in thresholds]; units = ""
@@ -334,7 +365,8 @@ def get_threshold_range_and_labels(condition, obs_data):
 def get_extreme_description(var_short, threshold_percentile=None,
                              threshold_value=None, threshold_mode="percentile"):
     if threshold_mode == "fixed":
-        units = {"2t": "°C", "10ff": "m/s", "tp24": "mm"}.get(var_short, "")
+        units = {"2t": "°C", "10ff": "m/s", "tp24": "mm",
+                 "go3": "ppb", "pm2p5": "µg/m³", "aod500": ""}.get(var_short, "")
         return f"Fixed threshold (= {threshold_value}{units})"
     if var_short == "2t":
         if threshold_percentile <= 50:

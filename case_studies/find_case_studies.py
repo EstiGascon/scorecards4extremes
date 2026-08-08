@@ -151,10 +151,25 @@ OROG_RANGES = {
     "high": (120, 9999),
 }
 
+# Predefined geographic areas [North, West, South, East] — MUST mirror filter.py
+AREAS = {
+    "europe":          [68, -15, 27, 50],
+    "nh_extratropics": [90, -180, 20, 180],
+    "tropics":         [20, -180, -20, 180],
+}
+
 
 def apply_filters(df: pd.DataFrame, season: str = None,
                   orog: str = None, config: dict = None) -> pd.DataFrame:
-    """Filter rows by season and/or orography type."""
+    """Filter rows by area, season, and/or orography type."""
+    area_name = (config or {}).get("filter", {}).get("area")
+    if area_name:
+        if area_name in AREAS:
+            lat_north, lon_west, lat_south, lon_east = AREAS[area_name]
+            df = df[(df["lat"] >= lat_south) & (df["lat"] <= lat_north) &
+                    (df["lon"] >= lon_west) & (df["lon"] <= lon_east)]
+        else:
+            print(f"  Warning: Unknown area '{area_name}', skipping area filter")
     if season and season in SEASON_MONTHS:
         months = SEASON_MONTHS[season]
         dates = df["date"].astype(str)

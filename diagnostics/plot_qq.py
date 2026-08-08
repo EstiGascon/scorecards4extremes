@@ -39,9 +39,12 @@ import _style
 # ============================================================================
 
 VARIABLE_LABELS = {
-    "2t":   ("2m Temperature",     "°C"),
-    "10ff": ("10m Wind Speed",     "m/s"),
-    "tp24": ("24h Precipitation",  "mm"),
+    "2t":     ("2m Temperature",     "°C"),
+    "10ff":   ("10m Wind Speed",     "m/s"),
+    "tp24":   ("24h Precipitation",  "mm"),
+    "aod500": ("AOD 500 nm",         ""),
+    "go3":    ("Ozone (O3)",         "ppb"),
+    "pm2p5":  ("PM2.5",              "µg/m³"),
 }
 
 SEASON_MONTHS = {
@@ -55,6 +58,13 @@ OROGRAPHY_RANGES = {
     "low":  (0,   40),
     "mid":  (40,  120),
     "high": (120, 3000),
+}
+
+# Predefined geographic areas [North, West, South, East] — MUST mirror filter.py
+AREAS = {
+    "europe":          [68, -15, 27, 50],
+    "nh_extratropics": [90, -180, 20, 180],
+    "tropics":         [20, -180, -20, 180],
 }
 
 
@@ -213,6 +223,19 @@ def apply_filters(
     """
     print(f"  Data size before filtering: {len(df):,} rows")
     df = df.copy()
+
+    # -- Geographic area -------------------------------------------------------
+    area_name = config.get("filter", {}).get("area")
+    if area_name:
+        if area_name in AREAS:
+            lat_north, lon_west, lat_south, lon_east = AREAS[area_name]
+            df = df[
+                (df["lat"] >= lat_south) & (df["lat"] <= lat_north) &
+                (df["lon"] >= lon_west) & (df["lon"] <= lon_east)
+            ]
+            print(f"  After area filter ({area_name}): {len(df):,} rows")
+        else:
+            print(f"  Warning: Unknown area '{area_name}', skipping area filter")
 
     # -- Date range ----------------------------------------------------------
     sd = start_date or config.get("start_date")
