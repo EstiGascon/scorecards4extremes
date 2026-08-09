@@ -1,6 +1,6 @@
 # Batch Job Submission
 
-> For the full submission reference see [docs/USER_GUIDE.md § 13](docs/USER_GUIDE.md#13-batch-submission-on-ecmwf-hpc) and [docs/COMPUTING.md](docs/COMPUTING.md).
+> For the full submission reference see [USER_GUIDE.md § 13](USER_GUIDE.md#13-batch-submission-on-ecmwf-hpc) and [COMPUTING.md](COMPUTING.md).
 
 ## Quick start
 

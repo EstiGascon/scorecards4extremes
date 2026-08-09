@@ -7,7 +7,8 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --chdir=/path/to/scorecards4extremes
 
-source "$(dirname "$0")/.venv/bin/activate"
+# This script lives in scripts/; the venv is one level up at the repo root.
+source "$(dirname "$0")/../.venv/bin/activate"
 
 echo "Job ID: $SLURM_JOB_ID  |  Node: $HOSTNAME  |  Start: $(date)"
 echo "Args: $@"

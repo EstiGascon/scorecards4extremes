@@ -17,7 +17,7 @@ Q-Q diagnostic plots.
 ## Quick start
 
 ```bash
-# 1. Install (see INSTALL.md for system dependencies and Metview)
+# 1. Install (see docs/INSTALL.md for system dependencies and Metview)
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt && pip install metview
 
@@ -35,7 +35,7 @@ For a full step-by-step walkthrough, see [docs/QUICKSTART.md](docs/QUICKSTART.md
 
 | Document | Content |
 |----------|---------|
-| [INSTALL.md](INSTALL.md) | System dependencies, virtual environment, Metview, ECMWF-only features |
+| [docs/INSTALL.md](docs/INSTALL.md) | System dependencies, virtual environment, Metview, ECMWF-only features |
 | [docs/QUICKSTART.md](docs/QUICKSTART.md) | Step-by-step first run in 5 steps |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Full reference — config schema, pipeline steps, scores, threshold methods, diagnostics |
 | [docs/SCIENCE.md](docs/SCIENCE.md) | Mathematical definitions of all scores |
@@ -50,21 +50,38 @@ config.yaml
     ▼
 python run.py my_config.yaml
     │
-    ├─ Step 1  read_data.py          Read GRIB forecasts + .gpt observations
-    ├─ Step 2  preprocess.py         Unit conversion, lapse-rate, accumulation
-    ├─ Step 3  extract_points.py     Interpolate to observation stations (Metview)
-    ├─ Step 4  filter.py             Season, terrain, QC filters
-    ├─ Step 5  threshold.py          Compute event threshold
-    ├─ Step 6  det_scores.py /       Verification scores (ETS, PSS, twMAE, …)
-    │          ens_scores.py
-    ├─ Step 7  bootstrap.py          95% confidence intervals
-    ├─ Step 8  save.py               Write CSV results
-    └─ Step 9  plot.py               Draw heatmap scorecards
+    ├─ Step 1  src/read_data.py      Read GRIB forecasts + .gpt observations
+    ├─ Step 2  src/preprocess.py     Unit conversion, lapse-rate, accumulation
+    ├─ Step 3  src/extract_points.py Interpolate to observation stations (Metview)
+    ├─ Step 4  src/filter.py         Season, terrain, QC filters
+    ├─ Step 5  src/threshold.py      Compute event threshold
+    ├─ Step 6  src/det_scores.py /   Verification scores (ETS, PSS, twMAE, …)
+    │          src/ens_scores.py
+    ├─ Step 7  src/bootstrap.py      95% confidence intervals
+    ├─ Step 8  src/save.py           Write CSV results
+    └─ Step 9  src/plot.py           Draw heatmap scorecards
+```
+
+## Repository layout
+
+```
+run.py              Entry point — run `python run.py <config.yaml>`
+config_example.yaml Annotated config template
+requirements.txt
+
+src/                Core pipeline modules (the scorecards tool itself)
+configs/            Ready-to-use config files (deterministic/, ensemble/, cams/)
+scripts/            SLURM submission + helper scripts (submit_job.sh, …)
+diagnostics/        Q-Q and extreme-event diagnostic plots
+analysis/           One-off analysis and figure scripts
+case_studies/       Case-study identification and visualisation
+docs/               Documentation (INSTALL, USER_GUIDE, SCIENCE, …)
+tests/              Unit tests
 ```
 
 ## Requirements
 
-Python ≥ 3.10. See [INSTALL.md](INSTALL.md) for the full dependency list and
+Python ≥ 3.10. See [docs/INSTALL.md](docs/INSTALL.md) for the full dependency list and
 system libraries. Key third-party packages: `metview`, `cfgrib`, `scores`,
 `xarray`, `pandas`, `matplotlib`, `Cartopy`.
 

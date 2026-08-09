@@ -6,7 +6,7 @@ Get your first scorecard running in 5 steps.
 
 ## Prerequisites
 
-- Python ≥ 3.10 with the project virtual environment set up (see [INSTALL.md](../INSTALL.md))
+- Python ≥ 3.10 with the project virtual environment set up (see [INSTALL.md](INSTALL.md))
 - GRIB forecast files for two models on local disk
 - `.gpt` (Geopoints) observation files on local disk (see [§10 of the User Guide](USER_GUIDE.md#10-observation-data-format-gpt--geopoints) for format details)
 - **Ensemble runs** additionally require ≥ 64 GB RAM; use a batch/HPC system if your laptop has less

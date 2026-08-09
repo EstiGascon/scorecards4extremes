@@ -11,7 +11,7 @@
 # Batch submission script for scorecards4extremes on ECMWF
 # ==============================================================================
 # Usage:
-#   sbatch submit_job.sh config_tp24_test.yaml
+#   sbatch scripts/submit_job.sh config_tp24_test.yaml
 #
 # ==============================================================================
 

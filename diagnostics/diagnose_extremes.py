@@ -61,7 +61,7 @@ import pandas as pd
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # for the sibling _style module
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root, for `import threshold`
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))  # src/, for `import threshold`
 import _style
 
 warnings.filterwarnings("ignore")

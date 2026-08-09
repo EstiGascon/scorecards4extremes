@@ -32,7 +32,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 import yaml
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import threshold as thr_mod  # reuse the real threshold logic
 
 

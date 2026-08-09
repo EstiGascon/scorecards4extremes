@@ -14,19 +14,19 @@
 # Pass options via --export environment variables instead:
 #
 #   # All data combined:
-#   sbatch --export=CONFIG=config_tp24_precipitation.yaml submit_qq.sh
+#   sbatch --export=CONFIG=config_tp24_precipitation.yaml scripts/submit_qq.sh
 #
 #   # Specific season + orography:
 #   sbatch --export=CONFIG=config_tp24_precipitation.yaml,SEASON=DJF,OROG=low \
-#       submit_qq.sh
+#       scripts/submit_qq.sh
 #
 #   # Multiple seasons and orography types (space-separated inside quotes):
 #   sbatch --export=CONFIG=config_tp24_precipitation.yaml,SEASON="DJF MAM JJA SON",OROG="low mid high" \
-#       submit_qq.sh
+#       scripts/submit_qq.sh
 #
 #   # Day-3 only, custom output directory:
 #   sbatch --export=CONFIG=config_tp24_precipitation.yaml,LEAD_TIME=72,OUTPUT_DIR=./plots/qq \
-#       submit_qq.sh
+#       scripts/submit_qq.sh
 #
 # Supported environment variables (all optional except CONFIG):
 #   CONFIG       - YAML config file path          (required)
