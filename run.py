@@ -120,6 +120,14 @@ try:
 except ImportError:
     QUAVER_EXTRACT_AVAILABLE = False
 
+# CAMS composition extraction backend (optional - backend='cams_extract')
+# Reads raw per-site CAMS/AERONET/AirNow NetCDF -> pipeline parquet (step 3 only).
+try:
+    import cams_extract
+    CAMS_EXTRACT_AVAILABLE = True
+except ImportError:
+    CAMS_EXTRACT_AVAILABLE = False
+
 
 def load_config(config_file='config.yaml'):
     """Load configuration from YAML file"""
@@ -714,9 +722,18 @@ def main():
             # ====================================================================
             backend = config.get('backend', 'local')
 
+            # CAMS species (aod500, go3, pm2p5, ...) auto-select the raw-NetCDF
+            # extraction backend — no explicit `backend:` key needed in the config.
+            if backend == 'local' and CAMS_EXTRACT_AVAILABLE and config['variable'] in cams_extract.SPECIES:
+                backend = 'cams_extract'
+
             if backend == 'quaver_extract' and not QUAVER_EXTRACT_AVAILABLE:
                 print("\nERROR: backend='quaver_extract' but quaver_extract.py not importable "
                       "(check vtb/quaver modules, e.g. `module load quaver/3.6.4`)")
+                sys.exit(1)
+
+            if backend == 'cams_extract' and not CAMS_EXTRACT_AVAILABLE:
+                print("\nERROR: backend='cams_extract' but cams_extract.py not importable")
                 sys.exit(1)
 
             # --- Quaver Compute backend: use native compute() API ---
@@ -793,6 +810,8 @@ def main():
                         point_data_path = quaver_backend.extract_points_quaver(config_partial, paths, preprocess_settings)
                     elif backend == 'quaver_extract':
                         point_data_path = quaver_extract.run_step3(config_partial, paths, preprocess_settings)
+                    elif backend == 'cams_extract':
+                        point_data_path = cams_extract.run_step3(config_partial, paths, preprocess_settings)
                     else:
                         point_data_path = _get_extract_points().run_step3(config_partial, paths, preprocess_settings)
                     # Restore full forecast_days so scoring uses all days
@@ -803,6 +822,8 @@ def main():
                         point_data_path = quaver_backend.extract_points_quaver(config, paths, preprocess_settings)
                     elif backend == 'quaver_extract':
                         point_data_path = quaver_extract.run_step3(config, paths, preprocess_settings)
+                    elif backend == 'cams_extract':
+                        point_data_path = cams_extract.run_step3(config, paths, preprocess_settings)
                     else:
                         point_data_path = _get_extract_points().run_step3(config, paths, preprocess_settings)
             else:
@@ -811,6 +832,8 @@ def main():
                     point_data_path = quaver_backend.extract_points_quaver(config, paths, preprocess_settings)
                 elif backend == 'quaver_extract':
                     point_data_path = quaver_extract.run_step3(config, paths, preprocess_settings)
+                elif backend == 'cams_extract':
+                    point_data_path = cams_extract.run_step3(config, paths, preprocess_settings)
                 else:
                     point_data_path = _get_extract_points().run_step3(config, paths, preprocess_settings)
             

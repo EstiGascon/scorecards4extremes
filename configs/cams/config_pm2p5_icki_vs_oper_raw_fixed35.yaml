@@ -1,0 +1,114 @@
+# ============================================================================
+# CAMS PM2.5 (pm2p5) — icki_airnow (control) vs oper_airnow, fixed threshold 35 ug/m3
+# Reads RAW NetCDF (model + AirNow obs) directly — no pre-built parquet needed.
+# ============================================================================
+# Step 3 performs the full read+align+convert (cams_extract.py backend), then
+# writes the standard pipeline parquet so Steps 4-9 are unchanged.
+# ============================================================================
+
+variable: "pm2p5"
+start_date: "2025-01-01"
+end_date:   "2025-12-31"
+mode: "deterministic"
+forecast_days: [1, 2, 3, 4, 5]     # steps 3..120 h -> days 1..5
+lead_time_frequency: 3             # AirNow steps are 3-hourly; keep all
+skip_extraction_if_exists: true    # reuse extracted parquet on rerun
+skip_scoring_if_exists:    false
+skip_daily_aggregation:    true    # score at native 3-hourly resolution (no daily mean)
+
+# ============================================================================
+# STEP 1: READ DATA  (raw per-site NetCDF, read directly by cams_extract.py)
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "icki_airnow"            # control experiment (reference) -> fc1_value
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/home/ecm7338/scorecards4extremes/cams_sample_data/icki_airnow"
+  forecast_model2:
+    name: "oper_airnow"            # experiment being evaluated -> fc2_value
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/home/ecm7338/scorecards4extremes/cams_sample_data/oper_airnow"
+  observation_source: "cams_netcdf"
+  cams_netcdf:
+    obs_path: "/home/ecm7338/scorecards4extremes/cams_sample_data/obs_airnow"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS  (all off — species already unit-converted in cams_extract.py)
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA  (real extraction — reads raw NetCDF)
+# ============================================================================
+extract_points:
+  output_path: "/home/moeg/scorecards4extremes/extracted_points/cams_pm2p5_icki_vs_oper_raw"
+  save_format: "pandas"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  area: null                        # global (AirNow network, mostly US/Canada)
+  lead_times: null
+  season: ["DJF", "MAM", "JJA", "SON"]
+  orography_type: "all"             # parquet has no 'sdfor' column
+  remove_coastal_stations: false    # parquet has no 'lsm' column
+  remove_outliers: false
+
+# ============================================================================
+# STEP 5: THRESHOLD  (fixed 35 ug/m3 ~ US EPA "Unhealthy for Sensitive Groups" 24h PM2.5)
+# ============================================================================
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 35.0
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+    - "correlation"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE
+# ============================================================================
+save:
+  output_directory: "./results/pm2p5_icki_vs_oper_raw_fixed35"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  enabled: true
+  heatmap_style: "smooth"
+  create_summary: true
+  dpi: 300
+  format: "png"

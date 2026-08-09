@@ -15,6 +15,10 @@ xarray==2026.4.0
 cfgrib==0.9.15.1
 eccodes==2.47.0
 
+# ── HDF5/netCDF4 reading (CAMS AirNow obs are HDF5; model files are netCDF3/scipy) ──
+h5netcdf==1.8.1
+h5py==3.16.0
+
 # ── Verification scores ────────────────────────────────────────────────────────
 scores==2.5.0
 

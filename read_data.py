@@ -26,6 +26,13 @@ def _resolve_forecast_source(cfg_model, model_label, config):
             raise FileNotFoundError(f"{model_label} path not found: {path}")
         return path, name, source
 
+    elif source == 'cams_netcdf':
+        path = cfg_model['cams_netcdf']['path']
+        print(f"  Path: {path}")
+        if not Path(path).exists():
+            raise FileNotFoundError(f"{model_label} path not found: {path}")
+        return path, name, source
+
     elif source == 'mars':
         # Retrieve forecast GRIB now, then treat as local_grib downstream.
         import mars_retrieve
@@ -93,6 +100,12 @@ def run_step1(config):
     
     if obs_source == 'local_gpt':
         obs_path = cfg['local_gpt']['path']
+        print(f"  Path: {obs_path}")
+        if not Path(obs_path).exists():
+            raise FileNotFoundError(f"Observation path not found: {obs_path}")
+
+    elif obs_source == 'cams_netcdf':
+        obs_path = cfg['cams_netcdf']['obs_path']
         print(f"  Path: {obs_path}")
         if not Path(obs_path).exists():
             raise FileNotFoundError(f"Observation path not found: {obs_path}")
