@@ -73,4 +73,18 @@ echo "Job completed with exit code: $exit_code"
 echo "End time: $(date)"
 echo "=========================================="
 
+# Auto-resubmit on failure: long quaver/vtb runs can die from a native
+# (Metview/eccodes) segfault after many hours. Per-date extraction is
+# already cached to extracted_points/<...>/_tmp, so a resubmission just
+# resumes from the last completed date instead of restarting. Bounded
+# retries avoid an infinite loop on a genuinely broken config.
+S4E_RETRY_COUNT=${S4E_RETRY_COUNT:-0}
+S4E_MAX_RETRIES=${S4E_MAX_RETRIES:-3}
+if [[ $exit_code -ne 0 && $S4E_RETRY_COUNT -lt $S4E_MAX_RETRIES ]]; then
+    next_retry=$((S4E_RETRY_COUNT + 1))
+    echo "Non-zero exit — auto-resubmitting (retry ${next_retry}/${S4E_MAX_RETRIES})..."
+    sbatch --export=ALL,S4E_RETRY_COUNT=${next_retry} \
+        /home/moeg/scorecards4extremes/scripts/submit_job_quaver.sh "$CONFIG"
+fi
+
 exit $exit_code

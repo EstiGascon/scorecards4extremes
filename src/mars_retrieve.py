@@ -150,8 +150,47 @@ def _ens_control_stream_type(mars_cfg, date_str):
     return 'enfo', 'cf'
 
 
+def _mars_block(cls, mars_type, stream, expver, date_str, time_str, step_str,
+                 levtype, param, target, model=None, number=None,
+                 database=None, grid=None, include_number=False):
+    """Build one MARS ``retrieve,`` stanza as request text."""
+    lines = [
+        "retrieve,",
+        f"  class    = {cls},",
+        f"  type     = {mars_type},",
+    ]
+    # stream is optional: research (rd/fdb) data is archived without it, and
+    # MARS defaults to oper for od/ai deterministic. Only emit if given.
+    if stream:
+        lines.append(f"  stream   = {stream},")
+    lines += [
+        f"  expver   = {expver},",
+        f"  date     = {date_str},",
+        f"  time     = {time_str},",
+        f"  step     = {step_str},",
+        f"  levtype  = {levtype},",
+        f"  param    = {param},",
+    ]
+    # model is required for AIFS (class=ai): model=aifs-ens / aifs-single.
+    if model:
+        lines.append(f"  model    = {model},")
+    if include_number:
+        lines.append(f"  number   = {number},")
+    if database:
+        lines.append(f"  database = {database},")
+    if grid:
+        lines.append(f"  grid     = {grid},")
+    lines.append(f'  target   = "{target}"')
+    return "\n".join(lines) + "\n"
+
+
 def _build_mars_request(mars_cfg, param, date_str, steps, mode, target):
-    """Return MARS request text for one param/day (det = 1 block; ens = control+pf)."""
+    """Return MARS request text for one deterministic param/day (single block).
+
+    Ensemble mode is handled separately by _build_ensemble_mars_requests —
+    see that function's docstring for why control/perturbed are NOT combined
+    into one multi-block request here.
+    """
     step_str = '/'.join(str(s) for s in steps)
     levtype = mars_cfg.get('levtype', 'sfc')
     time_str = _norm_time(mars_cfg.get('time', '00'))
@@ -159,51 +198,46 @@ def _build_mars_request(mars_cfg, param, date_str, steps, mode, target):
     expver = mars_cfg['expver']
     database = mars_cfg.get('database')       # e.g. 'fdb' for research (rd) data
     grid = mars_cfg.get('grid')               # optional regrid, e.g. '0.25/0.25'
-    number = mars_cfg.get('number', '1/to/50')
     model = mars_cfg.get('model')             # AIFS requires model=aifs-ens (class=ai)
+    # stream optional (omitted -> MARS default oper for od/ai; matches the
+    # research scripts which never set stream for rd/fdb data).
+    stream = mars_cfg.get('stream')
+    mars_type = mars_cfg.get('type', 'fc')
+    return _mars_block(cls, mars_type, stream, expver, date_str, time_str,
+                        step_str, levtype, param, target,
+                        model=model, database=database, grid=grid)
 
-    def _block(stream, mars_type, include_number):
-        lines = [
-            "retrieve,",
-            f"  class    = {cls},",
-            f"  type     = {mars_type},",
-        ]
-        # stream is optional: research (rd/fdb) data is archived without it, and
-        # MARS defaults to oper for od/ai deterministic. Only emit if given.
-        if stream:
-            lines.append(f"  stream   = {stream},")
-        lines += [
-            f"  expver   = {expver},",
-            f"  date     = {date_str},",
-            f"  time     = {time_str},",
-            f"  step     = {step_str},",
-            f"  levtype  = {levtype},",
-            f"  param    = {param},",
-        ]
-        # model is required for AIFS (class=ai): model=aifs-ens / aifs-single.
-        if model:
-            lines.append(f"  model    = {model},")
-        if include_number:
-            lines.append(f"  number   = {number},")
-        if database:
-            lines.append(f"  database = {database},")
-        if grid:
-            lines.append(f"  grid     = {grid},")
-        lines.append(f'  target   = "{target}"')
-        return "\n".join(lines)
 
-    if mode == 'ensemble':
-        # Control member (era/class-aware) + perturbed members, same target file.
-        ctrl_stream, ctrl_type = _ens_control_stream_type(mars_cfg, date_str)
-        control = _block(ctrl_stream, ctrl_type, include_number=False)
-        perturbed = _block('enfo', 'pf', include_number=True)
-        return control + "\n" + perturbed + "\n"
-    else:
-        # stream optional (omitted -> MARS default oper for od/ai; matches the
-        # research scripts which never set stream for rd/fdb data).
-        stream = mars_cfg.get('stream')
-        mars_type = mars_cfg.get('type', 'fc')
-        return _block(stream, mars_type, include_number=False) + "\n"
+def _build_ensemble_mars_requests(mars_cfg, param, date_str, steps,
+                                   ctrl_target, pert_target):
+    """Return (control_request, perturbed_request) text, each targeting its
+    OWN file — kept as two separate MARS requests rather than one combined
+    multi-block request.
+
+    Some research (rd) experiments only archive perturbed members (no
+    control), and MARS fails an ENTIRE multi-block request the moment any
+    one block returns 0 fields — which would otherwise discard perfectly
+    good perturbed-member data just because the control member is missing.
+    """
+    step_str = '/'.join(str(s) for s in steps)
+    levtype = mars_cfg.get('levtype', 'sfc')
+    time_str = _norm_time(mars_cfg.get('time', '00'))
+    cls = mars_cfg['class']
+    expver = mars_cfg['expver']
+    database = mars_cfg.get('database')
+    grid = mars_cfg.get('grid')
+    model = mars_cfg.get('model')
+    number = mars_cfg.get('number', '1/to/50')
+
+    ctrl_stream, ctrl_type = _ens_control_stream_type(mars_cfg, date_str)
+    control = _mars_block(cls, ctrl_type, ctrl_stream, expver, date_str, time_str,
+                           step_str, levtype, param, ctrl_target,
+                           model=model, database=database, grid=grid)
+    perturbed = _mars_block(cls, 'pf', 'enfo', expver, date_str, time_str,
+                             step_str, levtype, param, pert_target,
+                             model=model, number=number, database=database,
+                             grid=grid, include_number=True)
+    return control, perturbed
 
 
 def _run_mars(request_text):
@@ -229,6 +263,47 @@ def _run_mars(request_text):
             os.remove(reqfile)
         except OSError:
             pass
+
+
+def _retrieve_ensemble_param(mars_cfg, param, date_str, steps, target):
+    """Retrieve one ensemble param/day as control + perturbed MARS requests,
+    tolerating a missing control member (some research experiments only
+    archive perturbed members). Concatenates whatever succeeded into
+    `target` — GRIB messages are self-delimited, so plain concatenation of
+    the two files is a valid multi-message GRIB file.
+
+    Returns (ok, exit_code).
+    """
+    ctrl_tmp = target.with_name(target.name + '.ctrl.tmp')
+    pert_tmp = target.with_name(target.name + '.pert.tmp')
+    control_req, perturbed_req = _build_ensemble_mars_requests(
+        mars_cfg, param, date_str, steps, str(ctrl_tmp), str(pert_tmp))
+
+    ctrl_rc = _run_mars(control_req)
+    have_ctrl = ctrl_rc == 0 and ctrl_tmp.exists() and ctrl_tmp.stat().st_size > 0
+    if not have_ctrl:
+        print(f"      [WARN] control member unavailable for {param} {date_str} — using perturbed members only")
+        if ctrl_tmp.exists():
+            ctrl_tmp.unlink()
+
+    pert_rc = _run_mars(perturbed_req)
+    have_pert = pert_rc == 0 and pert_tmp.exists() and pert_tmp.stat().st_size > 0
+    if not have_pert:
+        if pert_tmp.exists():
+            pert_tmp.unlink()
+        if ctrl_tmp.exists():
+            ctrl_tmp.unlink()
+        return False, pert_rc
+
+    with open(target, 'wb') as out:
+        if have_ctrl:
+            with open(ctrl_tmp, 'rb') as f:
+                shutil.copyfileobj(f, out)
+            ctrl_tmp.unlink()
+        with open(pert_tmp, 'rb') as f:
+            shutil.copyfileobj(f, out)
+    pert_tmp.unlink()
+    return True, 0
 
 
 def retrieve_forecast(mars_cfg, variable, start_date, end_date, steps, mode='deterministic'):
@@ -258,9 +333,13 @@ def retrieve_forecast(mars_cfg, variable, start_date, end_date, steps, mode='det
                 n_skip += 1
                 continue
             print(f"    [{date_str}] retrieving {param} ...")
-            req = _build_mars_request(mars_cfg, param, date_str, steps, mode, str(target))
-            rc = _run_mars(req)
-            if rc == 0 and target.exists():
+            if mode == 'ensemble':
+                ok, rc = _retrieve_ensemble_param(mars_cfg, param, date_str, steps, target)
+            else:
+                req = _build_mars_request(mars_cfg, param, date_str, steps, mode, str(target))
+                rc = _run_mars(req)
+                ok = rc == 0 and target.exists()
+            if ok:
                 n_ok += 1
             else:
                 n_err += 1
