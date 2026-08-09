@@ -92,7 +92,7 @@ This runs all 9 pipeline steps sequentially in the current terminal.
 For the full verification period, submit as a SLURM job:
 
 ```bash
-sbatch submit_job.sh my_run.yaml
+sbatch scripts/submit_job.sh my_run.yaml
 ```
 
 Monitor progress:
@@ -154,7 +154,7 @@ Then change the `plot:` section and run again:
 ### Run detailed diagnostics (22-plot set)
 
 ```bash
-sbatch submit_diagnose.sh my_run.yaml --day 3 --season DJF --orog complex
+sbatch scripts/submit_diagnose.sh my_run.yaml --day 3 --season DJF --orog complex
 ```
 
 ### Switch to ensemble mode
@@ -186,5 +186,5 @@ For a full ensemble run with 250 dates × 50 members, expect **multiple 48h HPC 
 | Job fails immediately | Missing GRIB or GPT files | Check paths in `read_data` section |
 | `No stations found` | Season/orography filter too strict | Try `season: null` and `orography_type: null` first |
 | Heatmap all grey (NaN) | Too few events at threshold | Lower the percentile or use `dataset_climatology` |
-| Memory error in interactive | > 8 GB needed | Use `sbatch submit_job.sh` instead |
+| Memory error in interactive | > 8 GB needed | Use `sbatch scripts/submit_job.sh` instead |
 | Job killed before finishing | Ensemble needs > 48h | See `docs/COMPUTING.md` for restart strategy |

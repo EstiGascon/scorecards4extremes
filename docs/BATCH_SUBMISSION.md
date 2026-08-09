@@ -5,7 +5,7 @@
 ## Quick start
 
 ```bash
-sbatch submit_job.sh configs/deterministic/config_tp24_local_p99obsclim.yaml
+sbatch scripts/submit_job.sh configs/deterministic/config_tp24_local_p99obsclim.yaml
 ```
 
 Monitor progress:
@@ -15,7 +15,7 @@ squeue -u $USER
 tail -f scorecards_*.out
 ```
 
-## Current resource allocation (`submit_job.sh`)
+## Current resource allocation (`scripts/submit_job.sh`)
 
 | Resource | Value |
 |----------|-------|
@@ -23,7 +23,7 @@ tail -f scorecards_*.out
 | CPUs | 12 |
 | Walltime | 48 h |
 
-For lightweight deterministic runs (≤ 3 months, single variable) 64 GB / 4 CPU / 18 h is sufficient. Edit the `#SBATCH` headers in `submit_job.sh` accordingly.
+For lightweight deterministic runs (≤ 3 months, single variable) 64 GB / 4 CPU / 18 h is sufficient. Edit the `#SBATCH` headers in `scripts/submit_job.sh` accordingly.
 
 ## Interactive memory limit
 

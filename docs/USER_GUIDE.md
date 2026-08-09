@@ -58,20 +58,32 @@
 
 ```
 scorecards4extremes/
-├── run.py                          ← Main pipeline entry point
-├── submit_job.sh                   ← SLURM batch submission script
+├── run.py                          ← Main pipeline entry point (thin wrapper over src/run.py)
+├── config_example.yaml             ← Clean starter config (no ECMWF dependencies)
+├── requirements.txt                ← Python dependencies
+├── README.md                       ← Project overview + repository layout
 │
-├── read_data.py                    ← Step 1: Read GRIB/GPT files
-├── preprocess.py                   ← Step 2: Unit conversion, lapse-rate, accumulation
-├── extract_points.py               ← Step 3: Interpolate to station locations (deterministic)
-├── extract_points_ensemble.py      ← Step 3: Interpolate to station locations (ensemble)
-├── filter.py                       ← Step 4: Season, orography, QC filters
-├── threshold.py                    ← Step 5: Compute event threshold
-├── det_scores.py                   ← Step 6: Deterministic verification scores
-├── ens_scores.py                   ← Step 6: Ensemble verification scores
-├── bootstrap.py                    ← Step 7: Bootstrap confidence intervals
-├── save.py                         ← Step 8: Write results to CSV
-├── plot.py                         ← Step 9: Draw heatmap scorecards
+├── src/                            ← Core pipeline modules (the scorecards tool)
+│   ├── run.py                      ← 9-step workflow runner (main())
+│   ├── read_data.py                ← Step 1: Read GRIB/GPT files
+│   ├── preprocess.py               ← Step 2: Unit conversion, lapse-rate, accumulation
+│   ├── extract_points.py           ← Step 3: Interpolate to station locations (deterministic)
+│   ├── extract_points_ensemble.py  ← Step 3: Interpolate to station locations (ensemble)
+│   ├── filter.py                   ← Step 4: Season, orography, QC filters
+│   ├── threshold.py                ← Step 5: Compute event threshold
+│   ├── det_scores.py               ← Step 6: Deterministic verification scores
+│   ├── ens_scores.py               ← Step 6: Ensemble verification scores
+│   ├── bootstrap.py                ← Step 7: Bootstrap confidence intervals
+│   ├── save.py                     ← Step 8: Write results to CSV
+│   ├── plot.py                     ← Step 9: Draw heatmap scorecards
+│   ├── cams_extract.py             ← Step 3 backend: raw CAMS NetCDF extraction
+│   ├── quaver_extract.py           ← Step 3 backend: quaver extraction
+│   ├── quaver_backend.py           ← quaver retrieval helper
+│   ├── quaver_compute_backend.py   ← quaver compute helper
+│   ├── mars_retrieve.py            ← MARS/STVL retrieval helper
+│   ├── plot_paper.py               ← Publication-quality figure helper
+│   ├── utils.py                    ← Shared utilities (steps, geometry, IO)
+│   └── season_utils.py             ← Season masking helpers
 │
 ├── diagnostics/                    ← Standalone diagnostic and visualisation tools
 │   ├── diagnose_extremes.py        ← Comprehensive single-condition diagnostic (22 plots)
@@ -80,6 +92,8 @@ scorecards4extremes/
 │   ├── plot_qq_extremes.py         ← Q-Q plot with warm + cold zoom panels
 │   ├── plot_qq.py                  ← Full-range Q-Q plot
 │   └── plot_station_diagnostics.py ← Per-station spatial maps (mode auto-detected)
+│
+├── analysis/                       ← One-off analysis and figure scripts
 │
 ├── case_studies/                   ← Case-study identification and visualisation
 │   ├── find_case_studies.py        ← Rank dates by model-performance gap
@@ -96,15 +110,19 @@ scorecards4extremes/
 │   ├── obsclim.py
 │   └── run.sh
 │
-├── configs/                         ← Experiment config templates
-│   ├── deterministic/               ← Deterministic mode configs
-│   └── ensemble/                    ← Ensemble mode configs
-├── config_example.yaml             ← Clean starter config (no ECMWF dependencies)
-├── scripts/                        ← Auxiliary / one-off helper scripts
-│   ├── extract_tp24_obs.py         ← tp24 obs builder (ECMWF: vtb required)
-│   ├── setup_ecmwf.sh              ← HPC environment setup helper
-│   └── ...                         ← Other batch/utility scripts
-├── submit_job.sh                   ← SLURM submission wrapper
+├── configs/                        ← Experiment config templates
+│   ├── deterministic/              ← Deterministic mode configs
+│   ├── ensemble/                   ← Ensemble mode configs
+│   └── cams/                       ← CAMS composition configs
+│
+├── scripts/                        ← SLURM submission + auxiliary helper scripts
+│   ├── submit_job.sh               ← Main pipeline SLURM wrapper
+│   ├── submit_job_quaver.sh        ← Pipeline wrapper with vtb/quaver env
+│   ├── submit_qq.sh                ← Q-Q plot SLURM wrapper
+│   ├── submit_diagnose.sh          ← diagnose_extremes.py SLURM wrapper
+│   ├── check_mx2t_availability.sh  ← MARS mx2t availability check
+│   └── ...                         ← Other batch/utility helpers
+│
 └── docs/                           ← This documentation folder
 ```
 
@@ -361,7 +379,7 @@ parameter is derived from `variable` (`tp24` uses `tp` with a 24 h period).
 > this automatically: the STVL step runs in-process if `vtb` is importable, otherwise it
 > is run once in a subprocess under a vtb-capable Python (resolved via `module load
 > python3`, or `$S4E_VTB_PYTHON` if set). So a `stvl` config runs unchanged via
-> `sbatch submit_job.sh` — no need to switch the whole pipeline off the `.venv`.
+> `sbatch scripts/submit_job.sh` — no need to switch the whole pipeline off the `.venv`.
 > Forecast (`mars`) retrieval only needs the `mars` CLI and never `vtb`.
 
 > External (non-ECMWF) users cannot use `mars`/`stvl` (no MARS/STVL access) — keep
@@ -729,7 +747,7 @@ ensemble:
 
 ### Extraction differences
 
-- Ensemble extraction is handled by `extract_points_ensemble.py`
+- Ensemble extraction is handled by `src/extract_points_ensemble.py`
 - Per-date files are saved in a `_tmp/` subfolder during extraction; on completion they are merged into per-day parquet files
 - Each parquet row contains `fc1_member_0 … fc1_member_50` and `fc2_member_0 … fc2_member_50` columns
 - Lapse-rate correction is applied **per member**
@@ -806,7 +824,7 @@ python diagnostics/diagnose_extremes.py \
   --day 3 --threshold-value 30.0 --season JJA --orog flat
 
 # Submit as SLURM job (64 GB, 4 CPU, 4 h):
-sbatch submit_diagnose.sh --config configs/deterministic/config_2t_local_p1obsclim.yaml \
+sbatch scripts/submit_diagnose.sh --config configs/deterministic/config_2t_local_p1obsclim.yaml \
   --day 3 --threshold-pct 1 --season DJF --orog complex
 ```
 
@@ -961,7 +979,7 @@ lat       lon       height   date      time  value
 
 ### Naming convention
 
-The pipeline (`read_data.py`) looks for files named:
+The pipeline (`src/read_data.py`) looks for files named:
 
 | Variable | Pattern 1 | Pattern 2 |
 |----------|-----------|-----------|
@@ -1016,7 +1034,7 @@ for date, group in df.groupby("date"):
 
 ```bash
 cd /path/to/scorecards4extremes
-sbatch submit_job.sh config_my_experiment.yaml
+sbatch scripts/submit_job.sh config_my_experiment.yaml
 ```
 
 ### Monitoring
@@ -1044,9 +1062,9 @@ The pipeline supports **incremental restart** without re-doing already completed
 
 | Script | Purpose | Resources |
 |--------|---------|----------|
-| `submit_job.sh` | Main pipeline (extract + score + plot) | 128 GB, 12 CPU, 48 h |
-| `submit_qq.sh` | Q-Q plot tool (`diagnostics/plot_qq.py`) | 64 GB, 1 CPU, 1 h |
-| `submit_diagnose.sh` | `diagnostics/diagnose_extremes.py` (simple wrapper, passes all args through) | 32 GB, 1 CPU, 2 h |
+| `scripts/submit_job.sh` | Main pipeline (extract + score + plot) | 128 GB, 12 CPU, 48 h |
+| `scripts/submit_qq.sh` | Q-Q plot tool (`diagnostics/plot_qq.py`) | 64 GB, 1 CPU, 1 h |
+| `scripts/submit_diagnose.sh` | `diagnostics/diagnose_extremes.py` (simple wrapper, passes all args through) | 32 GB, 1 CPU, 2 h |
 | `scripts/submit_diagnose_job.sh` | `diagnostics/diagnose_extremes.py` (race-condition-safe multi-job helper) | 64 GB, 4 CPU, 4 h |
 | `scripts/submit_extraction.sh` | tp24 obs extraction from STVL | 64 GB, 4 CPU, 12 h |
 | `case_studies/submit_find_cases.sh` | `find_case_studies.py` via `--export` env vars | 64 GB, 1 CPU, 4 h |

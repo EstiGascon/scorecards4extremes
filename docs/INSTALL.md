@@ -108,8 +108,8 @@ export METVIEW_PYTHON_START_TIMEOUT=30
 
 ## Step 5 — (ECMWF HPC only) Update the SLURM submission scripts
 
-Before submitting batch jobs, update `submit_job.sh` and `submit_diagnose.sh`
-to point to your own clone of the repository:
+Before submitting batch jobs, update `scripts/submit_job.sh` and
+`scripts/submit_diagnose.sh` to point to your own clone of the repository:
 
 1. Change the `#SBATCH --chdir=` line to the actual path where you checked
    out the repository.
@@ -117,7 +117,7 @@ to point to your own clone of the repository:
    your venv.
 
 ```bash
-# Example — edit these two lines in submit_job.sh:
+# Example — edit these two lines in scripts/submit_job.sh:
 #SBATCH --chdir=/home/<your_username>/scorecards4extremes
 source /home/<your_username>/scorecards4extremes/.venv/bin/activate
 ```

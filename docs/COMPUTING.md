@@ -49,7 +49,7 @@ Interactive sessions on ECMWF HPC are limited to 8 GB. This is sufficient for:
 
 ## 2. SLURM Job Configuration
 
-The main submission script `submit_job.sh` currently requests:
+The main submission script `scripts/submit_job.sh` currently requests:
 
 ```bash
 #SBATCH --partition=nf      # ECMWF-specific partition name — change to your cluster's partition
@@ -166,7 +166,7 @@ On the next submission, already-present dates are detected and **skipped automat
 No config changes are needed between submissions. Simply resubmit:
 
 ```bash
-sbatch submit_job.sh my_run.yaml
+sbatch scripts/submit_job.sh my_run.yaml
 ```
 
 ### Score CSV skip (scoring)
@@ -192,9 +192,9 @@ skip_scoring_if_exists:    true
 
 ### CPUs and workers
 
-The ensemble scoring step (`ens_scores.py`) uses Python's `ProcessPoolExecutor` with a **hard cap of 4 workers**, regardless of the number of CPUs available. This prevents memory exhaustion when many members are loaded simultaneously.
+The ensemble scoring step (`src/ens_scores.py`) uses Python's `ProcessPoolExecutor` with a **hard cap of 4 workers**, regardless of the number of CPUs available. This prevents memory exhaustion when many members are loaded simultaneously.
 
-The extraction step (`extract_points_ensemble.py`) uses sequential per-date processing (no parallelism within the step), but multiple steps within a date are processed in parallel.
+The extraction step (`src/extract_points_ensemble.py`) uses sequential per-date processing (no parallelism within the step), but multiple steps within a date are processed in parallel.
 
 ### Memory per worker
 
@@ -256,7 +256,7 @@ For jobs that generate large temporary files (e.g. ensemble extraction), ensure 
 export TMPDIR=/scratch/$(whoami)
 ```
 
-The `submit_job.sh` script already sets this.
+The `scripts/submit_job.sh` script already sets this.
 
 ### Checking resource usage after a job
 
@@ -270,7 +270,7 @@ Use this to tune memory and walltime for subsequent submissions.
 
 ```bash
 # Submit
-sbatch submit_job.sh my_run.yaml
+sbatch scripts/submit_job.sh my_run.yaml
 
 # Monitor queue
 squeue -u $USER

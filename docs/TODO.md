@@ -17,8 +17,8 @@ ECMWF `python3` module (3.13), so STVL obs retrieval runs via a subprocess fallb
 - [ ] Validate on `.venv313`: `import vtb` in-process; run a small `mars`+`stvl` config through
       `run.py` (retrieve → extract → score → plot); re-run one completed config and confirm scores match 3.12.
 - [ ] Watch for eccodes/metview ABI issues from `--system-site-packages` vs pinned pip versions.
-- [ ] Only once green: point `submit_job.sh` at `.venv313`, then retire `.venv`.
-- [ ] Keep the subprocess fallback in `mars_retrieve.py` regardless (harmless; keeps the tool portable).
+- [ ] Only once green: point `scripts/submit_job.sh` at `.venv313`, then retire `.venv`.
+- [ ] Keep the subprocess fallback in `src/mars_retrieve.py` regardless (harmless; keeps the tool portable).
 
 ---
 

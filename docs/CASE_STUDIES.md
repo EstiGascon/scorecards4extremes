@@ -204,7 +204,7 @@ Full end-to-end example for 2 m temperature warm extremes, AIFS vs IFS, JJA seas
 The main pipeline must have completed extraction (`run.py`, Step 3) for the config:
 
 ```bash
-sbatch submit_job.sh configs/deterministic/config_2t_local_p99obsclim_aifs_ifs_single.yaml
+sbatch scripts/submit_job.sh configs/deterministic/config_2t_local_p99obsclim_aifs_ifs_single.yaml
 ```
 
 ### Step 1 — Find worst dates

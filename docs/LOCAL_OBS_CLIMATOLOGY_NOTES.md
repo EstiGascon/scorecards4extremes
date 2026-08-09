@@ -11,23 +11,26 @@ check, and what bugs to look for.
 
 ## Pipeline Overview
 
+> All core modules referenced below live in `src/` (e.g. `src/filter.py`,
+> `src/threshold.py`). Module names are used unqualified for brevity.
+
 ```
 Parquet files (sub-daily)
     │
-    ▼  filter.run_step4()           ← filter.py
+    ▼  filter.run_step4()           ← src/filter.py
 Step 4: coastal + QC + season + terrain filtering
     │
-    ▼  threshold.run_step5()        ← threshold.py  _compute_local_obs_climatology_threshold()
+    ▼  threshold.run_step5()        ← src/threshold.py  _compute_local_obs_climatology_threshold()
 Step 5: per-station threshold via nearest-neighbour clim match
     │
-    ▼  run._aggregate_to_daily_mean()   ← run.py
+    ▼  run._aggregate_to_daily_mean()   ← src/run.py
 Step 5b: aggregate sub-daily → daily means; realign threshold Series
     │
-    ▼  det_scores.run_step6()       ← det_scores.py   (deterministic)
-    ▼  ens_scores.run_step6_ensemble()  ← ens_scores.py  (ensemble)
+    ▼  det_scores.run_step6()       ← src/det_scores.py   (deterministic)
+    ▼  ens_scores.run_step6_ensemble()  ← src/ens_scores.py  (ensemble)
 Step 6: compute scores on daily-mean data with per-station thresholds
     │
-    ▼  plot.run_step9()             ← plot.py
+    ▼  plot.run_step9()             ← src/plot.py
 Step 9: heatmap of relative % difference fc2 vs fc1
 ```
 
