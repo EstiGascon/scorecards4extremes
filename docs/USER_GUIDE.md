@@ -51,6 +51,7 @@
 | `2t` | 2 m temperature | °C (after K→°C conversion + optional lapse-rate correction) |
 | `10ff` | 10 m wind speed | m/s (from U/V components) |
 | `tp24` | 24 h total precipitation | mm (after m→mm conversion and optional accumulation) |
+| `aod500`, `pm2p5`, `pm10`, `go3`, `no2`, `so2`, `co`, `no` | CAMS atmospheric composition (AOD / surface chemistry vs AERONET/AirNow) | see [§5 CAMS variables](#5-supported-variables) — different config schema (`source: "cams_netcdf"`), deterministic mode only |
 
 ---
 
@@ -134,7 +135,7 @@ Every experiment is defined by a single YAML file. Below is a fully-annotated te
 
 ```yaml
 # ── Basic settings ─────────────────────────────────────────────────────────
-variable: "2t"              # tp24 | 2t | 10ff
+variable: "2t"              # tp24 | 2t | 10ff | aod500 | pm2p5 | pm10 | go3 | no2 | so2 | co | no
 start_date: "2025-08-01"    # inclusive, YYYY-MM-DD
 end_date:   "2026-02-28"    # inclusive, YYYY-MM-DD
 mode: "deterministic"       # deterministic | ensemble
@@ -386,6 +387,41 @@ parameter is derived from `variable` (`tp24` uses `tp` with a 24 h period).
 > `local_grib` / `local_gpt` and pre-retrieve, or use `dataset_climatology`. The tool
 > raises a clear error if `mars`/`vtb` are unavailable.
 
+#### Direct extraction — `source: "cams_netcdf"` (CAMS atmospheric composition)
+
+CAMS variables (`aod500`, `pm2p5`, `pm10`, `go3`, `no2`, `so2`, `co`, `no`) are read
+straight from raw per-site model/observation NetCDF files — no GRIB, no gridded
+interpolation, and no `backend:` key needed (auto-selected, see below). Both
+`forecast_model1`/`forecast_model2` use `source: "cams_netcdf"`, and
+`observation_source` is `"cams_netcdf"` too:
+
+```yaml
+variable: "pm2p5"
+read_data:
+  forecast_model1:
+    name: "icki_airnow"          # defaults expid to this name; override with cams_netcdf.expid
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/path/to/icki_airnow"       # dir containing <expid>_<YYYYMMDD>_<run_hour>.nc
+  forecast_model2:
+    name: "oper_airnow"
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/path/to/oper_airnow"
+  observation_source: "cams_netcdf"
+  cams_netcdf:
+    obs_path: "/path/to/obs_airnow"      # AirNow (surface chemistry) or AERONET (aod500) NetCDF
+```
+
+Model/observation directory paths, names and (optional) `expid`/`run_hour` overrides
+are entirely config-driven — nothing is hardcoded to any specific experiment name.
+The pipeline auto-selects the `cams_extract` backend the moment `variable` is a
+known CAMS species and no pre-extracted parquet already exists (governed by
+`skip_extraction_if_exists`, same as any other backend); no explicit `backend:` key
+is required. See [§5 CAMS variables](#5-supported-variables) for the species table
+and caveats (deterministic only, no orography/lapse-rate correction, no
+`local_obs_climatology`/`station_climatology` threshold support).
+
 ### Step 2 — Pre-process
 
 - **Lapse-rate correction** (2t only): adjusts forecast 2t values to station elevation using `correction = lapse_rate × (station_height − model_height)`. Applied per member in ensemble mode. Enabled with `lapse_rate_correction: true`; setting it `false` disables the correction consistently in both deterministic and ensemble modes. Stations with an unrealistic correction (> 50 °C) or elevation mismatch (> 10000 m) are dropped as a quality safeguard, identically across all extraction backends.
@@ -396,6 +432,11 @@ parameter is derived from `variable` (`tp24` uses `tp` with a 24 h period).
 ### Step 3 — Extract Points
 
 Interpolates gridded forecast fields to observation station lat/lon coordinates using nearest-gridpoint. Outputs one **parquet file per forecast day** (e.g. `2t_model1_vs_model2_day1.parquet`).
+
+> **CAMS variables** use a different, fused Step 1+3 backend (`cams_extract.py`) that reads
+> raw per-site model/obs NetCDF directly (no gridded interpolation needed — see
+> [§5 CAMS variables](#5-supported-variables)). It writes the same parquet schema minus
+> `sdfor`/`lsm` (no orography data for these species), so Steps 4-9 are unaffected.
 
 Each parquet file contains columns:
 - `date`, `step`, `lat`, `lon`, `height`, `sdfor` — metadata
@@ -540,6 +581,41 @@ Because both `skip_*_if_exists` flags are `true`, extraction and scoring are ski
 - Observations: 10m instantaneous wind speed (m/s)
 - Typical threshold: p98 (strong winds)
 - `wind_speed_from_components: true` required in `preprocess`
+
+### CAMS Atmospheric Composition Variables
+
+Read via the raw-NetCDF `cams_extract` backend (`source: "cams_netcdf"`, see
+[Step 1](#4-pipeline-steps-in-detail)) — no GRIB/gridded interpolation involved.
+
+| Variable | Description | Obs network | Unit | Typical threshold |
+|----------|-------------|-------------|------|--------------------|
+| `aod500` | Aerosol optical depth at 500 nm | AERONET | dimensionless | fixed (e.g. 0.2–0.5) |
+| `pm2p5` | PM2.5 surface concentration | AirNow | µg/m³ | fixed 35 (US EPA "Unhealthy for Sensitive Groups" 24h) |
+| `pm10` | PM10 surface concentration | AirNow | µg/m³ | fixed |
+| `go3` | Surface ozone | AirNow | ppb | fixed 70 (US EPA "Unhealthy for Sensitive Groups" 8h O3) |
+| `no2` | Surface NO2 | AirNow | ppb | fixed |
+| `so2` | Surface SO2 | AirNow | ppb | fixed |
+| `co` | Surface CO | AirNow | ppm | fixed |
+| `no` | Surface NO | AirNow | ppb | fixed |
+
+Notes and caveats:
+
+- **Unit conversion is automatic** inside `cams_extract.py` (kg/m³→µg/m³ for
+  PM species; kg/kg→ppb/ppm for gases via the molar-mass ratio) — no
+  `unit_conversion_factor` needed in the config.
+- **Deterministic mode only** — there is no ensemble Step-3 path for CAMS species.
+- **No orography/coastal filtering or lapse-rate correction**: the per-site
+  NetCDF has no `sdfor`/`lsm`/height columns, so `filter.orography_type` and
+  `remove_coastal_stations` are self-skipped and `lapse_rate_correction` has no
+  effect for these variables.
+- **Threshold methods**: only `fixed`, `dataset_climatology` and
+  `model_percentile` apply — `station_climatology` and `local_obs_climatology`
+  require pre-built per-station climatology files that don't exist for CAMS
+  species (see [§6 Threshold Methods](#6-threshold-methods)).
+- **Area filtering** still works via `filter.area` (predefined boxes: `europe`,
+  `nh_extratropics`, `tropics`) since it's a plain lat/lon subset.
+- Add a new species by registering it in `cams_extract.SPECIES` (model/obs
+  variable names + unit-conversion kind) — no other code changes needed.
 
 ---
 

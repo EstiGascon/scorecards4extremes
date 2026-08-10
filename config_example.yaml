@@ -9,7 +9,8 @@
 # See docs/USER_GUIDE.md for all available options.
 # ============================================================================
 
-variable: "tp24"          # tp24 | 2t | 10ff
+variable: "tp24"          # tp24 | 2t | 10ff  (CAMS species also supported: aod500, pm2p5,
+                           #  pm10, go3, no2, so2, co, no — see docs/USER_GUIDE.md §5)
 start_date: "2024-01-01"  # ← CHANGE: inclusive, YYYY-MM-DD
 end_date:   "2024-03-31"  # ← CHANGE: keep short for a first test run
 mode: "deterministic"

@@ -163,3 +163,8 @@ e.g. `clim_2t_1_10_20years_2005_2024_65` for October.
 | `area_mean_climatology` | scalar | no | no | STVL (1980–2009) |
 | `model_percentile` | per-row | yes | no | no (uses forecast) |
 | `local_obs_climatology` | per-row | yes | yes | local clim files |
+
+> **CAMS atmospheric composition variables** (`aod500`, `pm2p5`, `pm10`, `go3`, `no2`,
+> `so2`, `co`, `no`) have no per-station climatology files or STVL access — use
+> `fixed`, `dataset_climatology`, or `model_percentile` only. `station_climatology`
+> and `local_obs_climatology` are not applicable to these variables.
