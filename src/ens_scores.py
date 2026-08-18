@@ -547,12 +547,19 @@ def _per_case_score_diff(score_name, fc1_np, fc2_np, obs_np, thr_np, event_type,
     quantile_score, ens_mean_*), this avoids threshold resampling in bootstrap
     and is both faster and more statistically correct.
     Returns a 1-D array of shape (n,). Returns None if not supported.
-    """
-    n, m = fc1_np.shape
 
+    fc1_np and fc2_np may have DIFFERENT numbers of members (columns) — e.g.
+    comparing a 51-member ensemble (control + 50 perturbed) against a
+    50-member one (perturbed only, no archived control). Each model's own
+    ensemble size must be derived from ITS OWN array inside each per-case
+    helper below (not a shared `m` from one model), otherwise the two
+    model's per-case computations silently use the wrong ensemble size for
+    whichever one doesn't match.
+    """
     if score_name in ('CRPS', 'fCRPS'):
         # Fair CRPS per case: E|X-y| - (1/2)*E|X-X'|
         def _crps_per_case(fc, obs):
+            m = fc.shape[1]
             term1 = np.abs(fc - obs[:, None]).mean(axis=1)
             s = np.sort(fc, axis=1)
             w = 2 * np.arange(m) - m + 1
@@ -563,6 +570,7 @@ def _per_case_score_diff(score_name, fc1_np, fc2_np, obs_np, thr_np, event_type,
     elif score_name == 'twCRPS':
         # Fair tail-weighted CRPS per case using chaining function
         def _twcrps_per_case(fc, obs, thr):
+            m = fc.shape[1]
             if event_type == 'above':
                 fc_v = np.maximum(fc, thr[:, None])
                 obs_v = np.maximum(obs, thr)

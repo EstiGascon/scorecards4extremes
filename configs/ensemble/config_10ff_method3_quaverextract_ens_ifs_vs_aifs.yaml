@@ -47,6 +47,8 @@ read_data:
       stream: "enfo"
       type: "pf"
       number: "1/to/50"
+      control_source:
+        mode: "own"                      # control from the SAME experiment (default)
 
   forecast_model2:                       # AIFS-ENS (evaluated)
     name: "aifs_ens"
@@ -59,6 +61,8 @@ read_data:
       type: "pf"
       number: "1/to/50"
       model: "aifs-ens"                  # AIFS requires the model key
+      control_source:
+        mode: "own"                      # control from the SAME experiment (default)
 
   observation_source: "quaver"
   quaver_obs:

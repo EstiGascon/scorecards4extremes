@@ -52,6 +52,8 @@ read_data:
       stream: "enfo"                     # ensemble; control resolved per class/date
       type: "pf"                         # perturbed members; control via cf/fc
       number: "1/to/50"
+      control_source:
+        mode: "own"                      # control from the SAME experiment (default)
 
   forecast_model2:                       # AIFS-ENS (evaluated)
     name: "aifs_ens"
@@ -64,6 +66,8 @@ read_data:
       type: "pf"
       number: "1/to/50"
       model: "aifs-ens"                  # AIFS requires the model key
+      control_source:
+        mode: "own"                      # control from the SAME experiment (default)
 
   # Observation source for STVL retrieval
   observation_source: "quaver"

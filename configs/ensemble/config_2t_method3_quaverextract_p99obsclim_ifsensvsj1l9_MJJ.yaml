@@ -56,6 +56,8 @@ read_data:
       stream: "enfo"                     # control stream/type resolved per class/date
       type: "pf"
       number: "1/to/50"
+      control_source:
+        mode: "own"                      # control from the SAME experiment (default)
 
   forecast_model2:                       # j1l9 research ENS (evaluated)
     name: "j1l9_ens"
@@ -67,6 +69,11 @@ read_data:
       stream: "enfo"
       type: "pf"
       number: "1/to/50"
+      control_source:                    # j1l9 has NO archived control member;
+        mode: "external"                 # use the deterministic RD sibling
+        class: "rd"                      # experiment j1l8 as its control instead
+        expver: "j1l8"
+        type: "fc"
 
   observation_source: "quaver"
   quaver_obs:

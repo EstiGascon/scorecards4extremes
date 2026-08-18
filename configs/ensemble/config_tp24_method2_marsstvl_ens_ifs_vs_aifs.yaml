@@ -49,6 +49,8 @@ read_data:
       time: "00"
       number: "1/to/50"
       base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast_ENS/raw"
+      control_source:
+        mode: "own"                      # control from the SAME experiment (default)
 
   forecast_model2:                       # AIFS-ENS (evaluated)
     name: "aifs_ens"
@@ -63,6 +65,8 @@ read_data:
       time: "00"
       number: "1/to/50"
       base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast_ENS/raw"
+      control_source:
+        mode: "own"                      # control from the SAME experiment (default)
 
   observation_source: "stvl"
   stvl:

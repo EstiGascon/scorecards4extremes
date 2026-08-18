@@ -59,6 +59,8 @@ read_data:
       stream: "enfo"
       type: "pf"
       number: "1/to/50"
+      control_source:
+        mode: "own"                      # control from the SAME experiment (default)
 
   forecast_model2:                       # j1l9 research ENS (evaluated)
     name: "j1l9_ens"
@@ -70,6 +72,8 @@ read_data:
       stream: "enfo"
       type: "pf"
       number: "1/to/50"
+      control_source:
+        mode: "own"                      # j1l9 has a genuine control for 10ff (unlike 2t/tp24)
 
   observation_source: "quaver"
   quaver_obs:

@@ -586,7 +586,11 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
                 'lsm': lsm_vals,
             }
 
-            # Add member columns
+            # Add member columns. fc1/fc2 may legitimately have DIFFERENT
+            # numbers of members (e.g. one model has no archived control) —
+            # ens_scores.py computes each model's scores independently from
+            # its own columns, so no symmetry between fc1_member_* and
+            # fc2_member_* is required here.
             for col, vals in fc1_member_values.items():
                 row_data[col] = list(vals)
             for col, vals in fc2_member_values.items():

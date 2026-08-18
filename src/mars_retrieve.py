@@ -218,6 +218,21 @@ def _build_ensemble_mars_requests(mars_cfg, param, date_str, steps,
     control), and MARS fails an ENTIRE multi-block request the moment any
     one block returns 0 fields — which would otherwise discard perfectly
     good perturbed-member data just because the control member is missing.
+
+    `mars_cfg['control_source']` (optional) controls where the control
+    member comes from:
+      - unset / {'mode': 'own'} (default): control uses the SAME class/expver
+        as the perturbed members (era-aware stream/type via
+        _ens_control_stream_type).
+      - {'mode': 'omit'}: no control is retrieved at all — control_request
+        is returned as None. Use this when an experiment has no control and
+        you'd rather compare on perturbed members only than substitute one.
+      - {'mode': 'external', 'class':..., 'expver':..., 'type':..., ...}: the
+        control is retrieved from a DIFFERENT MARS identity (e.g. a
+        deterministic sibling experiment j1l8 standing in for j1l9's missing
+        control). Any key not given falls back to the perturbed members'
+        own mars_cfg value (levtype/time/database/grid/model), except
+        class/expver which MUST be given, and type which defaults to 'fc'.
     """
     step_str = '/'.join(str(s) for s in steps)
     levtype = mars_cfg.get('levtype', 'sfc')
@@ -229,10 +244,29 @@ def _build_ensemble_mars_requests(mars_cfg, param, date_str, steps,
     model = mars_cfg.get('model')
     number = mars_cfg.get('number', '1/to/50')
 
-    ctrl_stream, ctrl_type = _ens_control_stream_type(mars_cfg, date_str)
-    control = _mars_block(cls, ctrl_type, ctrl_stream, expver, date_str, time_str,
-                           step_str, levtype, param, ctrl_target,
-                           model=model, database=database, grid=grid)
+    control_source = mars_cfg.get('control_source') or {}
+    ctrl_mode = control_source.get('mode', 'own')
+
+    control = None
+    if ctrl_mode == 'omit':
+        control = None
+    elif ctrl_mode == 'external':
+        ext_cls = control_source['class']
+        ext_expver = control_source['expver']
+        ext_type = control_source.get('type', 'fc')
+        ext_stream = control_source.get('stream')
+        ext_database = control_source.get('database', database)
+        ext_grid = control_source.get('grid', grid)
+        ext_model = control_source.get('model', model)
+        control = _mars_block(ext_cls, ext_type, ext_stream, ext_expver, date_str,
+                               time_str, step_str, levtype, param, ctrl_target,
+                               model=ext_model, database=ext_database, grid=ext_grid)
+    else:
+        ctrl_stream, ctrl_type = _ens_control_stream_type(mars_cfg, date_str)
+        control = _mars_block(cls, ctrl_type, ctrl_stream, expver, date_str, time_str,
+                               step_str, levtype, param, ctrl_target,
+                               model=model, database=database, grid=grid)
+
     perturbed = _mars_block(cls, 'pf', 'enfo', expver, date_str, time_str,
                              step_str, levtype, param, pert_target,
                              model=model, number=number, database=database,
@@ -279,12 +313,17 @@ def _retrieve_ensemble_param(mars_cfg, param, date_str, steps, target):
     control_req, perturbed_req = _build_ensemble_mars_requests(
         mars_cfg, param, date_str, steps, str(ctrl_tmp), str(pert_tmp))
 
-    ctrl_rc = _run_mars(control_req)
-    have_ctrl = ctrl_rc == 0 and ctrl_tmp.exists() and ctrl_tmp.stat().st_size > 0
-    if not have_ctrl:
-        print(f"      [WARN] control member unavailable for {param} {date_str} — using perturbed members only")
-        if ctrl_tmp.exists():
-            ctrl_tmp.unlink()
+    have_ctrl = False
+    if control_req is None:
+        # control_source.mode == 'omit' — deliberately not requested.
+        pass
+    else:
+        ctrl_rc = _run_mars(control_req)
+        have_ctrl = ctrl_rc == 0 and ctrl_tmp.exists() and ctrl_tmp.stat().st_size > 0
+        if not have_ctrl:
+            print(f"      [WARN] control member unavailable for {param} {date_str} — using perturbed members only")
+            if ctrl_tmp.exists():
+                ctrl_tmp.unlink()
 
     pert_rc = _run_mars(perturbed_req)
     have_pert = pert_rc == 0 and pert_tmp.exists() and pert_tmp.stat().st_size > 0

@@ -624,7 +624,9 @@ def _retrieve_ensemble_one_day_param(config, model_key, date, steps, param,
     kind='perturbed' -> perturbed members (type=pf, number=1/to/n_members).
     kind='control'   -> single control member. stream/type come from
                         _ens_control_stream_type (enfo/cf, or oper/fc for the
-                        operational IFS from Cycle 50r1 onwards).
+                        operational IFS from Cycle 50r1 onwards) — UNLESS
+                        `quaver.control_source` requests an external identity
+                        (see _model_control_mode docstring).
 
     Explicit `param` (not derived from the variable) so 10ff can be retrieved as
     its raw 10u/10v components, exactly like the deterministic path.
@@ -633,6 +635,26 @@ def _retrieve_ensemble_one_day_param(config, model_key, date, steps, param,
     q = config['read_data'][model_key]['quaver']
     date_str = (date.strftime('%Y%m%d') if hasattr(date, 'strftime')
                 else str(date).replace('-', '')[:8])
+    control_source = q.get('control_source') or {}
+    if kind == 'control' and control_source.get('mode') == 'external':
+        # Control comes from a DIFFERENT experiment (e.g. a deterministic
+        # sibling run standing in for this ensemble's missing control).
+        mars_kw = dict(
+            parameter=param,
+            levtype='sfc',
+            date=date,
+            step=steps,
+            class_=control_source['class'],
+            expver=control_source['expver'],
+            stream=control_source.get('stream', 'oper'),
+            type=control_source.get('type', 'fc'),
+        )
+        if control_source.get('model'):
+            mars_kw['model'] = control_source['model']
+        if control_source.get('grid', q.get('grid')):
+            mars_kw['grid'] = control_source.get('grid', q.get('grid'))
+        return vtb.media.mars_retrieve(**mars_kw)
+
     mars_kw = dict(
         parameter=param,
         levtype='sfc',
@@ -758,13 +780,15 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
     def _retrieve_model(model_key):
         """Retrieve ensemble fieldsets for one model → dict of Fieldsets."""
         d = {}
+        q = config['read_data'][model_key]['quaver']
+        want_control = include_control and (q.get('control_source') or {}).get('mode') != 'omit'
         if is_wind:
             d['u_pert'] = _retrieve_ensemble_one_day_param(
                 config, model_key, date, all_fc_steps, '10u', 'perturbed', n_members)
             d['v_pert'] = _retrieve_ensemble_one_day_param(
                 config, model_key, date, all_fc_steps, '10v', 'perturbed', n_members)
             d['u_ctrl'] = d['v_ctrl'] = None
-            if include_control:
+            if want_control:
                 try:
                     d['u_ctrl'] = _retrieve_ensemble_one_day_param(
                         config, model_key, date, all_fc_steps, '10u', 'control', n_members)
@@ -776,7 +800,7 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
             d['pert'] = _retrieve_ensemble_one_day_param(
                 config, model_key, date, all_fc_steps, param, 'perturbed', n_members)
             d['ctrl'] = None
-            if include_control:
+            if want_control:
                 try:
                     d['ctrl'] = _retrieve_ensemble_one_day_param(
                         config, model_key, date, all_fc_steps, param, 'control', n_members)
@@ -849,6 +873,11 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
             for m in list(fc2_members):
                 if m in fc2_prev:
                     fc2_members[m] = fc2_members[m] - fc2_prev[m]
+
+        # fc1/fc2 may legitimately have DIFFERENT numbers of members (e.g.
+        # one model has no archived control) — ens_scores.py computes each
+        # model's scores independently from its own columns, so no symmetry
+        # between fc1_members/fc2_members is required here.
 
         obs_df = obs_step.to_dataframe()
         n = len(obs_df)
@@ -928,10 +957,13 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
                 'sdfor': float(sdfor_vals[i]) if sdfor_vals is not None and i < len(sdfor_vals) else 0.0,
                 'lsm': float(lsm_vals[i]) if lsm_vals is not None and i < len(lsm_vals) else 1.0,
             }
-            for m, arr in fc1_members.items():
-                row[f'fc1_member_{m}'] = float(arr[i]) if i < len(arr) else np.nan
-            for m, arr in fc2_members.items():
-                row[f'fc2_member_{m}'] = float(arr[i]) if i < len(arr) else np.nan
+            # Emit whatever member keys each model actually has (fc1/fc2 may
+            # differ, e.g. one model has no archived control — see comment
+            # above the step loop).
+            for m, arr1 in fc1_members.items():
+                row[f'fc1_member_{m}'] = float(arr1[i]) if i < len(arr1) else np.nan
+            for m, arr2 in fc2_members.items():
+                row[f'fc2_member_{m}'] = float(arr2[i]) if i < len(arr2) else np.nan
             day_rows.append(row)
 
     del fc1, fc2, obs_by_vdt

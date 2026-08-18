@@ -54,6 +54,8 @@ read_data:
       number: "1/to/50"
       base_path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast_ENS/raw"
       # database: fdb                    # uncomment if MARS reports "not found"
+      control_source:
+        mode: "own"                      # control from the SAME experiment (default)
 
   forecast_model2:                       # j1l9 research ENS (evaluated)
     name: "j1l9_ens"
@@ -68,6 +70,11 @@ read_data:
       number: "1/to/50"
       base_path: "/ec/vol/destine/continuous_evaluation/2mtemp/forecast_ENS/raw"
       # database: fdb                    # uncomment if MARS reports "not found"
+      control_source:                    # j1l9 has NO archived control member;
+        mode: "external"                 # use the deterministic RD sibling
+        class: rd                        # experiment j1l8 as its control instead
+        expver: "j1l8"
+        type: fc
 
   observation_source: "stvl"
   stvl:

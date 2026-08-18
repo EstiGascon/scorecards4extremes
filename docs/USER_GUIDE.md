@@ -708,6 +708,22 @@ Retrieves per-station percentiles from the STVL ECMWF observation climatology da
 | Root Mean Square Error | `rmse` | RMSE over all cases |
 | Pearson Correlation | `correlation` | Pearson correlation coefficient between forecast and observation |
 
+Requesting `twMAE` automatically adds six extra columns per condition, decomposing the score into
+its hit / miss / false-alarm contributions (these three sum exactly to `twMAE`):
+
+| Column | Meaning |
+|--------|---------|
+| `twMAE_hits` | Share of total twMAE from hits = (n_hits / N) × mean\|fc − obs\| on hits |
+| `twMAE_misses` | Share of total twMAE from misses = (n_misses / N) × mean(obs − T) on misses |
+| `twMAE_FA` | Share of total twMAE from false alarms = (n_FA / N) × mean(fc − T) on false alarms |
+| `twMAE_hit_mae` | Per-case accuracy on hits only: mean\|fc − obs\|, **not** weighted by how often hits occur |
+| `twMAE_miss_severity` | Per-case severity of missed events: mean(obs − T) among misses |
+| `twMAE_fa_severity` | Per-case severity of false alarms: mean(fc − T) among false alarms |
+
+The `_hits`/`_misses`/`_FA` fields are "budget shares" (affected by both event frequency and
+per-case error); the `_hit_mae`/`_miss_severity`/`_fa_severity` fields isolate per-case accuracy
+from frequency and are usually more informative for comparing two models' error character.
+
 ### Ensemble scores
 
 | Score | Config key | Description |
@@ -802,7 +818,23 @@ Each score CSV contains one row per forecast lead time with columns:
 lead_time | fc1_ETS | fc2_ETS | ETS_diff | ETS_ci_lower | ETS_ci_upper | ...
 ```
 
-`diff` = (model1 − model2) / model2 × 100 %  (positive = model1 better)
+`{score}_diff` in the CSV is a plain **absolute** difference: `fc2 − fc1` (model2 minus model1),
+for every score including twMAE/twRMSE — it is not a percentage.
+
+The **heatmap color/annotation** shown in the PNGs is computed separately at plot time (not
+stored in the CSV) and is a percentage, normalized differently depending on the score type —
+and the color convention flips between the two groups:
+
+- Error-type scores (`twMAE`, `twRMSE`, `mae`, `rmse`, `bias`, the twMAE decomposition columns,
+  `CRPS`, `twCRPS`, `tw_quantile_score`, `diagonal_score`, `ens_mean_*`, `Brier`) and
+  "higher-is-better" scores (`ens_spread`, `extreme_spread_skill_ratio`):
+  `pct_diff = (fc2 − fc1) / fc1 × 100`.
+  Lower error is better here, so **negative = model2 (fc2) better, shown blue; positive =
+  model1 (fc1) better, shown red.**
+- Bounded skill scores (`ETS`, `PSS`, `POD`, `FAR`, etc.): `pct_diff = (fc2 − fc1) / (1 − fc1) × 100`
+  (skill-score-style normalization against the remaining headroom to a perfect score of 1).
+  Higher skill is better here, so **positive = model2 (fc2) better, shown blue; negative =
+  model1 (fc1) better, shown red.**
 
 ---
 
@@ -821,11 +853,63 @@ ensemble:
   include_control: true   # include control member (member 0) as member 51
 ```
 
+### Comparing ensembles of different sizes / missing control members
+
+Model 1 and model 2 do **not** need the same number of members. All ensemble
+scores (twCRPS, Brier, ens_mean_bias, etc.) are computed **independently per
+model** from whatever `fc{1,2}_member_*` columns that model actually has, so
+e.g. a 51-member ensemble (control + 50 perturbed) can be compared directly
+against a 50-member one (perturbed only, no archived control) — nothing
+needs to be padded or truncated to match.
+
+When a model has no archived control member (common for research/`rd`
+experiments), configure how to handle it per model under its `mars:` (method
+2) or `quaver:` (method 3) block with `control_source`:
+
+```yaml
+read_data:
+  forecast_model2:
+    name: "j1l9_ens"
+    source: "mars"          # or "quaver" for method 3 (same control_source keys)
+    mars:
+      class: rd
+      expver: "j1l9"
+      # ... other mars keys ...
+      control_source:
+        mode: "omit"        # this model simply has no control member (default
+                             # if control_source is unset AND retrieval fails:
+                             # falls back to perturbed-only automatically with
+                             # a [WARN] print — set 'omit' to skip the attempt
+                             # entirely and avoid that per-date retrieval cost)
+```
+
+Or substitute a **different experiment's deterministic run** as the control
+(e.g. a sibling research experiment that WAS run deterministically):
+
+```yaml
+      control_source:
+        mode: "external"
+        class: rd            # MARS identity of the substitute control run
+        expver: "j1l8"        # (required: class + expver)
+        type: fc              # optional, default "fc"
+        stream: oper           # optional (method 2 only omits if unset;
+                                # method 3/quaver defaults to "oper")
+        # model / grid / database: optional, inherited from this model's own
+        # mars/quaver block if not given here
+```
+
+`mode: "own"` (or omitting `control_source` entirely) is the default: control
+is retrieved from the SAME experiment as the perturbed members, exactly as
+before. This currently applies to methods 2 (`mars`) and 3 (`quaver`); method
+1 (`local_grib`) already tolerates a pre-staged GRIB file with no control
+field (falls back to perturbed-only automatically) but does not support
+substituting an external control file.
+
 ### Extraction differences
 
 - Ensemble extraction is handled by `src/extract_points_ensemble.py`
 - Per-date files are saved in a `_tmp/` subfolder during extraction; on completion they are merged into per-day parquet files
-- Each parquet row contains `fc1_member_0 … fc1_member_50` and `fc2_member_0 … fc2_member_50` columns
+- Each parquet row contains `fc1_member_0 … fc1_member_50` and `fc2_member_0 … fc2_member_50` columns by default — but the two counts can differ (see above) if one model has no control member
 - Lapse-rate correction is applied **per member**
 
 ### Scoring differences
