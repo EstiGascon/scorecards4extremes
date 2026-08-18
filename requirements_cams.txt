@@ -1,0 +1,70 @@
+# Scorecards4Extremes — Python requirements
+# Install with: pip install -r requirements.txt
+#
+# NOTE: metview and eccodes also require system-level libraries.
+# See INSTALL.md for full instructions before running pip install.
+
+# ── Core data ──────────────────────────────────────────────────────────────────
+numpy==2.4.4
+pandas==2.3.3
+PyYAML==6.0.3
+scipy==1.17.1
+xarray==2026.4.0
+
+# ── GRIB reading (requires ecCodes system library — see INSTALL.md) ────────────
+cfgrib==0.9.15.1
+eccodes==2.47.0
+
+# ── HDF5/netCDF4 reading (AirNow obs are HDF5; model files are netCDF3/scipy) ──
+h5netcdf==1.8.1
+h5py==3.16.0
+
+# ── Verification scores ────────────────────────────────────────────────────────
+scores==2.5.0
+
+# ── Plotting ───────────────────────────────────────────────────────────────────
+matplotlib==3.10.9
+seaborn==0.13.2
+Cartopy==0.25.0
+shapely==2.1.2
+pyproj==3.7.2
+
+# ── Data storage ───────────────────────────────────────────────────────────────
+pyarrow==24.0.0
+
+# ── Utilities ──────────────────────────────────────────────────────────────────
+attrs==26.1.0
+Bottleneck==1.6.0
+requests==2.34.2
+
+# ── Transitive dependencies (locked for reproducibility) ──────────────────────
+certifi==2026.4.22
+cffi==2.0.0
+charset-normalizer==3.4.7
+click==8.4.1
+contourpy==1.3.3
+cycler==0.12.1
+findlibs==0.1.2
+fonttools==4.62.1
+idna==3.18
+kiwisolver==1.5.0
+packaging==26.1
+pillow==12.2.0
+pycparser==3.0
+pyparsing==3.3.2
+pypdf==6.10.1
+pyshp==3.0.3
+python-dateutil==2.9.0.post0
+pytz==2026.1.post1
+six==1.17.0
+tzdata==2026.1
+urllib3==2.7.0
+
+# ── NOT INCLUDED — requires separate installation ─────────────────────────────
+# metview         Requires the Metview binary; install via conda-forge or
+#                 from https://metview.readthedocs.io/en/latest/install.html
+#                 Then: pip install metview
+#
+# vtb             ECMWF-internal package; not available on public PyPI.
+#                 Only needed for the quaver/STVL backend — not required
+#                 for the local_grib / local_gpt workflow.
