@@ -123,17 +123,37 @@ python case_studies/plot_case_study.py \
 | `--season DJF\|MAM\|JJA\|SON` | all | Apply seasonal filter when loading data |
 | `--orog low\|mid\|high` | all | Apply orography filter when loading data |
 | `--title TEXT` | auto | Additional title string |
+| `--zoom NAME` | `europe` | Map area to plot for the station maps (Figure 1) — see below |
 
 ### Predefined zoom regions
 
-The map panels use one of the following named bounding boxes (passed via `--title` or hard-coded when adapting the script):
+`--zoom` selects the map extent (lon/lat bounding box) for the station map panels. Built-in options:
 
 | Name | Lon range | Lat range |
 |------|-----------|-----------|
+| `global` | −180 to 180 | −90 to 90 |
+| `nh_extratropics` | −180 to 180 | 20 to 90 |
+| `tropics` | −180 to 180 | −20 to 20 |
+| `sh_extratropics` | −180 to 180 | −90 to −20 |
 | `europe` | −25 to 40 | 35 to 72 |
+| `north_america` | −170 to −50 | 5 to 75 |
+| `south_america` | −85 to −33 | −60 to 15 |
+| `asia` | 25 to 150 | −10 to 80 |
+| `africa` | −20 to 55 | −35 to 38 |
+| `oceania` | 110 to 180 | −50 to 25 |
+| `middle_east` | 25 to 63 | 12 to 42 |
+| `southeast_asia` | 92 to 141 | −11 to 29 |
+| `indian_subcontinent` | 66 to 92 | 5 to 38 |
 | `germany` | 5 to 16 | 47 to 56 |
 | `uk` | −11 to 3 | 49 to 61 |
+| `de_pl_cz` | 5 to 25 | 47 to 56 |
 | `central_europe` | 2 to 26 | 43 to 59 |
+| `conus` | −125 to −65 | 20 to 50 |
+
+To add your own area without editing any code, copy
+`case_studies/custom_areas.yaml.example` to `case_studies/custom_areas.yaml` and
+add `name: [lon_min, lon_max, lat_min, lat_max]` entries — they are merged in
+automatically and become available immediately as `--zoom <name>`.
 
 ### Example
 

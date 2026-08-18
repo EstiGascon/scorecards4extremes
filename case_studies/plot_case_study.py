@@ -41,6 +41,13 @@ Options
   --season      Filter season: DJF MAM JJA SON
   --orog        Filter orog: low mid high
   --title       Extra title string
+  --zoom        Map area to plot. Built-in: global, nh_extratropics, tropics,
+                sh_extratropics, europe, north_america, south_america, asia,
+                africa, oceania, middle_east, southeast_asia,
+                indian_subcontinent, germany, uk, de_pl_cz, central_europe,
+                conus. Add your own by creating case_studies/custom_areas.yaml
+                (see case_studies/custom_areas.yaml.example) — no code change
+                needed, it is picked up automatically.
 """
 
 import argparse
@@ -89,15 +96,55 @@ EUROPE_LON = (-25, 40)
 EUROPE_LAT = (35, 72)
 PROJ = ccrs.PlateCarree()
 
-# Named zoom regions: (lon_min, lon_max, lat_min, lat_max)
+# Named zoom regions: (lon_min, lon_max, lat_min, lat_max).
+# To add your own area WITHOUT editing this file, put it in
+# case_studies/custom_areas.yaml (see case_studies/custom_areas.yaml.example)
+# — it is merged in automatically below and becomes available immediately as
+# `--zoom <name>`.
 ZOOM_REGIONS = {
-    "europe":         (-25, 40,  35, 72),
+    # ── Global / latitude bands ──
+    "global":          (-180, 180, -90,  90),
+    "nh_extratropics": (-180, 180,  20,  90),
+    "tropics":         (-180, 180, -20,  20),
+    "sh_extratropics": (-180, 180, -90, -20),
+
+    # ── Continents ──
+    "europe":        ( -25,  40,  35,  72),
+    "north_america": (-170, -50,   5,  75),
+    "south_america": ( -85, -33, -60,  15),
+    "asia":          (  25, 150, -10,  80),
+    "africa":        ( -20,  55, -35,  38),
+    "oceania":       ( 110, 180, -50,  25),
+
+    # ── Sub-continent regions ──
+    "middle_east":           ( 25,  63,  12,  42),
+    "southeast_asia":        ( 92, 141, -11,  29),
+    "indian_subcontinent":   ( 66,  92,   5,  38),
+
+    # ── Country / sub-region zooms ──
     "germany":        (  5, 16,  47, 56),
     "uk":             (-11,  3,  49, 61),
     "de_pl_cz":       (  5, 25,  47, 56),
     "central_europe": (  2, 26,  43, 59),  # BeNeLux, DE, PL, S.Scandinavia, CZ, HR, RS, HU
     "conus":          (-125, -65, 20, 50),  # continental US — CAMS AirNow (go3/pm2p5) stations
 }
+
+
+def _load_custom_zoom_regions(path=Path(__file__).parent / "custom_areas.yaml"):
+    """Load user-defined zoom regions from case_studies/custom_areas.yaml.
+
+    Format: `name: [lon_min, lon_max, lat_min, lat_max]`. Missing file is not
+    an error — this mechanism is optional. Entries here override built-in
+    names of the same key.
+    """
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        custom = yaml.safe_load(f) or {}
+    return {name: tuple(bounds) for name, bounds in custom.items()}
+
+
+ZOOM_REGIONS.update(_load_custom_zoom_regions())
 
 # Predefined geographic areas [North, West, South, East] — MUST mirror filter.py.
 # Used for data-level filtering only (NOT the map extent, which is set via --zoom).
@@ -133,7 +180,8 @@ def parse_args():
     p.add_argument("--no-ensemble-prob", action="store_true")
     p.add_argument("--zoom",    default=None,
                    choices=list(ZOOM_REGIONS.keys()),
-                   help="Zoom into a named region (germany, uk, europe)")
+                   help="Map area to plot (continents, latitude bands, sub-regions, "
+                        "or your own from case_studies/custom_areas.yaml)")
     return p.parse_args()
 
 

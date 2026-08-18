@@ -1,0 +1,13 @@
+# ============================================================================
+# Custom map zoom regions for plot_case_study.py --zoom
+# ============================================================================
+# Copy this file to `custom_areas.yaml` (same folder) and add your own named
+# areas below. They are merged into the built-in ZOOM_REGIONS automatically
+# at startup and become available immediately as `--zoom <name>` — no code
+# change needed. A name here with the same key as a built-in area overrides it.
+#
+# Format: name: [lon_min, lon_max, lat_min, lat_max]
+#
+# Example (uncomment and edit):
+# iberia: [-10, 4, 36, 44]
+# alps:   [5, 16, 44, 48]
