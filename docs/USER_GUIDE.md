@@ -734,7 +734,25 @@ from frequency and are usually more informative for comparing two models' error 
 | Brier Skill Score | `BSS` | Brier score relative to climatological baseline |
 | TW Quantile Score (mean) | `tw_quantile_score` | Mean twQS across all tail levels |
 | TW Quantile Score — level | `tw_quantile_score_q001` etc. | twQS at a specific quantile level (see below) |
-| Extreme Spread/Skill Ratio | `extreme_spread_skill_ratio` | Ensemble spread vs RMSE in the extreme tail |
+| Extreme Spread/Skill Ratio | `extreme_spread_skill_ratio` | Ensemble spread vs RMSE, **always** restricted to cases where obs crosses the threshold (unconditional on the `extreme_only_basic_scores` flag below) |
+| Ensemble Mean Bias | `ens_mean_bias` | Mean(ensemble mean − obs) |
+| Ensemble Mean MAE | `ens_mean_mae` | MAE of the ensemble mean vs obs |
+| Ensemble Mean RMSE | `ens_mean_rmse` | RMSE of the ensemble mean vs obs |
+| Ensemble Spread | `ens_spread` | Mean of the per-case ensemble std-dev across members |
+
+`ens_mean_bias`/`ens_mean_mae`/`ens_mean_rmse`/`ens_spread` are **always computed automatically**
+for ensemble mode — they don't need to be (and can't be) listed under `scores.ensemble`.
+
+By default these four scores (and only these four — `extreme_spread_skill_ratio` is always
+tail-conditioned regardless) are computed over **all** samples, not just the extreme tail. To
+restrict them to cases where the observation crosses the threshold (conditional verification),
+set:
+
+```yaml
+scores:
+  ensemble: [...]
+  extreme_only_basic_scores: true   # default false = computed over all samples
+```
 
 #### Threshold-weighted Quantile Score levels
 

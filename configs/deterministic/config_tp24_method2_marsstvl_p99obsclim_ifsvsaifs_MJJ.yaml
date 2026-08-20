@@ -1,0 +1,167 @@
+# ============================================================================
+# DETERMINISTIC — METHOD 2 (MARS + STVL) — tp24 heavy precip extremes (p99), MJJ
+# ============================================================================
+# Deterministic counterpart of configs/ensemble/config_tp24_method2_marsstvl_
+# p99obsclim_ifsensvsaifsens_MJJ.yaml — SAME period/season/area/threshold/
+# filter settings, so the two runs can be directly compared (det HRES vs ENS
+# control-equivalent skill).
+#
+# Evaluated model  : IFS deterministic operational  (ifs_oper,     od/oper/0001)  forecast_model1
+# Reference model  : AIFS deterministic operational (aifs1.0_oper, ai/oper/0001)  forecast_model2
+#
+# Period: 2026-05-13 to 2026-08-02, single season "MJJ" (May-Jun-Jul; the
+# trailing Aug 1-2 days are naturally excluded by the season filter).
+# forecast_days 1-10 (24-hourly, matching the ensemble config's 24h steps).
+# Threshold: per-station p99 from local obs climatology (heavy precip),
+# identical to the ensemble config.
+# ============================================================================
+
+variable: "tp24"
+start_date: "2026-05-13"
+end_date: "2026-08-02"
+mode: "deterministic"
+backend: "local"
+forecast_days: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+lead_time_frequency: 24
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA — retrieve deterministic HRES from MARS (forecasts) + STVL (obs)
+# ============================================================================
+read_data:
+  forecast_model1:                       # IFS deterministic operational (reference)
+    name: "ifs_oper"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: od
+      type: fc
+      stream: oper
+      expver: "0001"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+      # database: fdb                    # uncomment if MARS reports "not found"
+
+  forecast_model2:                       # AIFS deterministic operational (evaluated)
+    name: "aifs1.0_oper"
+    source: "mars"
+    unit_conversion_factor: 1.0          # AIFS tp already in kg m-2 (= mm)
+    mars:
+      class: ai
+      type: fc
+      stream: oper
+      expver: "0001"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+      # database: fdb                    # uncomment if MARS reports "not found"
+
+  observation_source: "stvl"
+  stvl:
+    sources: ["synop", "hdobs"]
+    base_path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_method2_marsstvl_p99obsclim_ifsvsaifs_MJJ"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS (AIFS runs on its own grid — separate lsm/orog)
+# ============================================================================
+auxiliary_fields:
+  model1:                                # IFS deterministic operational
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:                                # AIFS deterministic operational
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/aifs_lsm.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/aifs_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — MJJ season, orography split (identical to ensemble config)
+# ============================================================================
+filter:
+  lead_times: null
+  season: "MJJ"
+  orography_type: ["low", "mid", "high"]
+  orography_ranges:
+    low:  [0, 40]
+    mid:  [40, 120]
+    high: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  remove_outliers: true
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "tp"
+    percentile: 99
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+
+# ============================================================================
+# STEP 6: SCORES (deterministic)
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 500
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_method2_marsstvl_p99obsclim_ifsvsaifs_MJJ"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"
