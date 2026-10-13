@@ -37,6 +37,8 @@ from datetime import datetime, timedelta
 # 10ff (wind speed) is retrieved as its two components and combined at extraction.
 _VARIABLE_TO_PARAMS = {
     '2t':   ['2t'],
+    'mx2t': ['2t'],   # daily max of 6-hourly 2t (derived at scoring time)
+    'mn2t': ['2t'],   # daily min of 6-hourly 2t (derived at scoring time)
     '10ff': ['10u', '10v'],
     'tp24': ['tp'],
     'tp':   ['tp'],
@@ -152,7 +154,7 @@ def _ens_control_stream_type(mars_cfg, date_str):
 
 def _mars_block(cls, mars_type, stream, expver, date_str, time_str, step_str,
                  levtype, param, target, model=None, number=None,
-                 database=None, grid=None, include_number=False):
+                 database=None, grid=None, interpolation=None, include_number=False):
     """Build one MARS ``retrieve,`` stanza as request text."""
     lines = [
         "retrieve,",
@@ -180,6 +182,8 @@ def _mars_block(cls, mars_type, stream, expver, date_str, time_str, step_str,
         lines.append(f"  database = {database},")
     if grid:
         lines.append(f"  grid     = {grid},")
+    if interpolation:
+        lines.append(f"  interpolation = {interpolation},")
     lines.append(f'  target   = "{target}"')
     return "\n".join(lines) + "\n"
 
@@ -198,6 +202,7 @@ def _build_mars_request(mars_cfg, param, date_str, steps, mode, target):
     expver = mars_cfg['expver']
     database = mars_cfg.get('database')       # e.g. 'fdb' for research (rd) data
     grid = mars_cfg.get('grid')               # optional regrid, e.g. '0.25/0.25'
+    interpolation = mars_cfg.get('interpolation')  # e.g. 'grid-box-average' (conservative)
     model = mars_cfg.get('model')             # AIFS requires model=aifs-ens (class=ai)
     # stream optional (omitted -> MARS default oper for od/ai; matches the
     # research scripts which never set stream for rd/fdb data).
@@ -205,7 +210,8 @@ def _build_mars_request(mars_cfg, param, date_str, steps, mode, target):
     mars_type = mars_cfg.get('type', 'fc')
     return _mars_block(cls, mars_type, stream, expver, date_str, time_str,
                         step_str, levtype, param, target,
-                        model=model, database=database, grid=grid)
+                        model=model, database=database, grid=grid,
+                        interpolation=interpolation)
 
 
 def _build_ensemble_mars_requests(mars_cfg, param, date_str, steps,
@@ -241,6 +247,7 @@ def _build_ensemble_mars_requests(mars_cfg, param, date_str, steps,
     expver = mars_cfg['expver']
     database = mars_cfg.get('database')
     grid = mars_cfg.get('grid')
+    interpolation = mars_cfg.get('interpolation')  # e.g. 'grid-box-average' (conservative)
     model = mars_cfg.get('model')
     number = mars_cfg.get('number', '1/to/50')
 
@@ -258,19 +265,22 @@ def _build_ensemble_mars_requests(mars_cfg, param, date_str, steps,
         ext_database = control_source.get('database', database)
         ext_grid = control_source.get('grid', grid)
         ext_model = control_source.get('model', model)
+        ext_interpolation = control_source.get('interpolation', interpolation)
         control = _mars_block(ext_cls, ext_type, ext_stream, ext_expver, date_str,
                                time_str, step_str, levtype, param, ctrl_target,
-                               model=ext_model, database=ext_database, grid=ext_grid)
+                               model=ext_model, database=ext_database, grid=ext_grid,
+                               interpolation=ext_interpolation)
     else:
         ctrl_stream, ctrl_type = _ens_control_stream_type(mars_cfg, date_str)
         control = _mars_block(cls, ctrl_type, ctrl_stream, expver, date_str, time_str,
                                step_str, levtype, param, ctrl_target,
-                               model=model, database=database, grid=grid)
+                               model=model, database=database, grid=grid,
+                               interpolation=interpolation)
 
     perturbed = _mars_block(cls, 'pf', 'enfo', expver, date_str, time_str,
                              step_str, levtype, param, pert_target,
                              model=model, number=number, database=database,
-                             grid=grid, include_number=True)
+                             grid=grid, interpolation=interpolation, include_number=True)
     return control, perturbed
 
 
@@ -517,8 +527,15 @@ def _retrieve_obs_inproc(stvl_cfg, variable, start_date, end_date, steps, base_t
 
     sources = stvl_cfg.get('sources', ['synop'])
     force = bool(stvl_cfg.get('force', False))
-    # STVL uses 'tp' with a 24h period for tp24 accumulation obs
-    stvl_param = 'tp' if variable == 'tp24' else variable
+    # STVL uses 'tp' with a 24h period for tp24 accumulation obs.
+    # mx2t/mn2t observations are ordinary 6-hourly 2t (daily max/min is derived
+    # later at scoring time), so retrieve STVL '2t'.
+    if variable == 'tp24':
+        stvl_param = 'tp'
+    elif variable in ('mx2t', 'mn2t'):
+        stvl_param = '2t'
+    else:
+        stvl_param = variable
     stvl_period = pd.to_timedelta('24h') if variable == 'tp24' else None
 
     vdts = _valid_datetimes(start_date, end_date, steps, base_time)

@@ -109,7 +109,6 @@ filter:
     high: [120, 3000]
   remove_coastal_stations: false
   coastal_lsm_threshold: 0.9
-  remove_outliers: false
   min_valid_wind_speed: 0.0
   max_valid_wind_speed: 100.0
 

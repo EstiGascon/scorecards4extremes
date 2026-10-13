@@ -6,6 +6,7 @@ Variable-specific preprocessing:
   - 2t: Apply lapse-rate correction
   - tp24: Compute 24h accumulation
 """
+from utils import physical_variable as _physical_variable
 
 
 def run_step2(config, paths):
@@ -24,7 +25,7 @@ def run_step2(config, paths):
     
     preprocess_settings = {}
     
-    if variable == '2t':
+    if _physical_variable(variable) == '2t':
         apply_correction = cfg.get('lapse_rate_correction', True)
         lapse_rate = cfg.get('lapse_rate', -0.0065)
         if apply_correction:

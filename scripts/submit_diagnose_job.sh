@@ -55,10 +55,10 @@ module load ecmwf-toolbox/new
 module load python3
 
 echo ""
-echo "Running: python3 diagnostics/diagnose_extremes.py \$DIAG_ARGS"
+echo "Running: python3 diagnostics/deterministic/diagnose_extremes.py \$DIAG_ARGS"
 echo ""
 
-python3 -u diagnostics/diagnose_extremes.py \$DIAG_ARGS
+python3 -u diagnostics/deterministic/diagnose_extremes.py \$DIAG_ARGS
 exit_code=\$?
 
 # Clean up per-job files once done

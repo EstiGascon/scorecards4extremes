@@ -32,7 +32,9 @@
 #   CONFIG       - YAML config file path          (required)
 #   SEASON       - Season(s): "DJF" or "DJF MAM JJA SON"
 #   OROG         - Orography: "low" or "low mid high"
+#   AREA         - Geographic area override: "france", "europe", ...
 #   LEAD_TIME    - Lead time(s) in hours: "24" or "24 48 72"
+#   DAY          - Forecast day(s): "2" or "2 5 8" (daily-aggregated, one plot per day)
 #   START_DATE   - Override start date: "YYYY-MM-DD"
 #   END_DATE     - Override end date:   "YYYY-MM-DD"
 #   THRESHOLD    - Threshold value override (float)
@@ -62,6 +64,10 @@ export TMPDIR=/ec/res4/scratch/$USER/tmp
 mkdir -p "$TMPDIR"
 export METVIEW_PYTHON_START_TIMEOUT=30
 
+# The tool needs pyarrow/pandas/matplotlib/cartopy from the project venv.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO_ROOT/.venv/bin/activate"
+
 # Uncomment if modules are not loaded automatically:
 # module load ecmwf-toolbox/new
 # module load python3
@@ -71,7 +77,9 @@ ARGS="--config $CONFIG"
 
 [[ -n "$SEASON" ]]      && ARGS="$ARGS --season $SEASON"
 [[ -n "$OROG" ]]        && ARGS="$ARGS --orog $OROG"
+[[ -n "$AREA" ]]        && ARGS="$ARGS --area $AREA"
 [[ -n "$LEAD_TIME" ]]   && ARGS="$ARGS --lead-time $LEAD_TIME"
+[[ -n "$DAY" ]]         && ARGS="$ARGS --day $DAY"
 [[ -n "$START_DATE" ]]  && ARGS="$ARGS --start-date $START_DATE"
 [[ -n "$END_DATE" ]]    && ARGS="$ARGS --end-date $END_DATE"
 [[ -n "$THRESHOLD" ]]   && ARGS="$ARGS --threshold $THRESHOLD"
@@ -82,11 +90,11 @@ ARGS="--config $CONFIG"
 
 # -- Run the tool ------------------------------------------------------------
 echo "==========================================="
-echo "Running: python3 -u diagnostics/plot_qq.py $ARGS"
+echo "Running: python3 -u diagnostics/qq/plot_qq.py $ARGS"
 echo "==========================================="
 echo ""
 
-python3 -u diagnostics/plot_qq.py $ARGS
+python3 -u diagnostics/qq/plot_qq.py $ARGS
 
 exit_code=$?
 

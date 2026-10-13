@@ -1,0 +1,138 @@
+# ============================================================================
+# QQ-plot pipeline: 10ff — ifs_oper (IFS-CF) vs aifs1.0_oper (AIFS1.0)
+# ============================================================================
+# Mirrors config_tp24_ifs_vs_aifs_0.25degree.yaml (same period/area/filter
+# conventions) but for 10m wind speed. No 0.25° regridded GRIB exists for
+# 10ff (unlike tp24), so both models are read at their NATIVE resolution.
+# Wind speed derived from 10u/10v components (standard repo convention).
+# Period: 2024-07-01 to 2025-07-31, forecast days 1–10 (24-hourly), Europe.
+# Coastal stations are KEPT (remove_coastal_stations: false — matches the
+# repo convention for 10ff wind extremes).
+# ============================================================================
+
+variable: "10ff"
+start_date: "2024-07-01"
+end_date: "2025-07-31"
+mode: "deterministic"
+forecast_days: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+lead_time_frequency: 24
+skip_extraction_if_exists: true
+skip_scoring_if_exists: true
+
+# ============================================================================
+# STEP 1: READ DATA (local GRIB, native resolution)
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "ifs_oper"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/10wind_speed/forecast/raw/ifs_oper"
+
+  forecast_model2:
+    name: "aifs1.0_oper"
+    source: "local_grib"
+    unit_conversion_factor: 1.0
+    local_grib:
+      path: "/ec/vol/destine/continuous_evaluation/10wind_speed/forecast/raw/aifs1.0_oper"
+
+  observation_source: "local_gpt"
+  local_gpt:
+    path: "/ec/vol/destine/continuous_evaluation/10wind_speed/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: true
+  lapse_rate_correction: false
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/10ff_ifs_vs_aifs"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/aifs_lsm.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/aifs_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: null
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0,   40]
+    hilly:   [40,  120]
+    complex: [120, 3000]
+  remove_coastal_stations: false
+  coastal_lsm_threshold: 0.9
+  min_valid_wind_speed: 0.0
+  max_valid_wind_speed: 100.0
+
+# ============================================================================
+# STEP 5: THRESHOLD (12 m/s extreme wind — does not affect QQ plot, only skill scores)
+# ============================================================================
+threshold:
+  method: "fixed"
+  fixed:
+    value: 12.0
+    event_type: "above"
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/10ff_ifs_vs_aifs"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"

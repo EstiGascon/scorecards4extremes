@@ -123,8 +123,6 @@ filter:
     high: [120, 3000]
   remove_coastal_stations: true
   coastal_lsm_threshold: 0.9
-  remove_outliers: true
-  outlier_threshold_std: 5.0
   min_valid_temperature: -60.0
   max_valid_temperature: 60.0
 

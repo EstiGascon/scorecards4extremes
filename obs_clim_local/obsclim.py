@@ -110,6 +110,20 @@ if param == '2t':
     obs_period = 0 # hours
     verifWindowList = [1,3,5,7,10,14,15] # days
     period = 6
+if param == 'mx2t':
+    # Daily MAX of the 6-hourly 2t observations (not the STVL station-reported
+    # daily tmax) so the climatology is consistent with how mx2t forecasts are
+    # scored (daily max of 6-hourly 2t). Retrieved from STVL parameter '2t'.
+    pname = '2-metre daily maximum temperature (from 6-hourly 2t)'
+    obs_period = 0 # hours
+    verifWindowList = [1] # days
+    period = 6
+if param == 'mn2t':
+    # Daily MIN of the 6-hourly 2t observations (see mx2t note above).
+    pname = '2-metre daily minimum temperature (from 6-hourly 2t)'
+    obs_period = 0 # hours
+    verifWindowList = [1] # days
+    period = 6
 if param == 'tmax':
     pname = '2-metre maximum temperature'
     obs_period = 24 # hours
@@ -127,6 +141,10 @@ if param == '10ff':
     period = 6
 
 maxlength = max(verifWindowList)    
+# STVL parameter to retrieve. mx2t/mn2t are derived from 6-hourly 2t obs, so
+# they are retrieved from STVL as '2t' (there is no separate 6-hourly max/min
+# station parameter); the daily max/min is computed below from the sub-daily 2t.
+stvl_param = '2t' if param in ('mx2t', 'mn2t') else param
 # list of the dates to be retrieved
 listOfListsOfDates = []
 for d in listOfDatesPerMonth(int(mm),int(fyear),int(lyear),maxlength):
@@ -144,7 +162,7 @@ for ldates in list(chunks(datesToRetrieve,100)):
     for obs in stvl.retrieve_to_geodfs(
                     table = 'observation',
                     sources = ['synop','hdobs'],
-                    parameter=param,period=obs_period*3600,
+                    parameter=stvl_param,period=obs_period*3600,
                     reference_datetimes=[d for d in ldates]
         ):
         # remove duplicated observations
@@ -208,9 +226,9 @@ for vw in verifWindowList:
             arr = arr_mean(obs_xarray,dd)
         elif param == 'tp':
             arr = arr_sum(obs_xarray,dd)
-        elif param == 'tmin':
+        elif (param == 'tmin') or (param == 'mn2t'):
             arr = arr_min(obs_xarray,dd)
-        elif param == 'tmax':
+        elif (param == 'tmax') or (param == 'mx2t'):
             arr = arr_max(obs_xarray,dd)
         clim.append(arr)
 
@@ -232,7 +250,7 @@ for vw in verifWindowList:
         perc = clim_array_masked.quantile([q/100 for q in range(0,101)],dim='date',interpolation='nearest')
         mean = clim_array_masked.mean('date')
 
-        if (param == '2t') or (param == 'tmax') or (param == 'tmin'):
+        if (param == '2t') or (param == 'tmax') or (param == 'tmin') or (param == 'mx2t') or (param == 'mn2t'):
             perc = perc - 273.15 # Kelvin to Celsius
             mean = mean - 273.15
 

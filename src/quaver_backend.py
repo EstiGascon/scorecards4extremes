@@ -166,7 +166,7 @@ def _format_threshold_suffix(config):
         value = threshold_cfg.get('fixed', {}).get('value', 0)
         if variable == 'tp24':
             return f"_{value:.0f}mm"
-        elif variable == '2t':
+        elif variable in ('2t', 'mx2t', 'mn2t'):
             return f"_{value:.1f}C"
         elif variable == '10ff':
             return f"_{value:.1f}ms"
@@ -1493,6 +1493,8 @@ def _variable_to_param(variable):
     """Map config variable name to MARS/STVL parameter name."""
     mapping = {
         '2t': '2t',
+        'mx2t': '2t',    # derived from 6-hourly 2t (daily max at scoring time)
+        'mn2t': '2t',    # derived from 6-hourly 2t (daily min at scoring time)
         '10ff': '10si',  # 10m wind speed (instantaneous)
         'tp24': 'tp',
     }
@@ -2036,7 +2038,7 @@ def _fieldsets_to_dataframe(fc1, fc2, obs, date, steps,
                 row['fc2_value'] = fc2_val * fc2_unit_factor
 
             # Apply preprocessing for 2t
-            if variable == '2t':
+            if variable in ('2t', 'mx2t', 'mn2t'):
                 # Temperature conversion K → °C (VTB/MARS always returns Kelvin)
                 if row.get('obs_value', 0) > 100:
                     row['obs_value'] -= 273.15

@@ -1,0 +1,187 @@
+# ============================================================================
+# Ensemble MARS (METHOD 2): tp24 — 99th percentile obs climatology (heavy precip)
+# 0.25° REGRID (conservative interpolation) — TRUNCATED to AIFS-ENS availability
+# ============================================================================
+# Ensemble counterpart of the deterministic
+# config_tp24_method2_marsstvl_p99obsclim_ifsvsaifs_fullyear_regrid025.yaml
+# (which covers 2025-03-09 -> 2026-03-08).
+#
+# IMPORTANT — supersedes the earlier BACKWARD+native_fullyear split approach:
+# probing MARS directly (2026-09-10) confirmed the AIFS-ENS archive
+# (class=ai, stream=enfo, model=aifs-ens, param=tp) genuinely BEGINS on
+# 2025-07-02 — there is NO earlier data to backward-fill, live or otherwise
+# (dates 20250309..20250701 all "Data not found"; 2025-07-02 succeeds).
+# This is why config_tp24_ens_mars_p99obsclim_aifsvsifs_BACKWARD.yaml
+# (job 35315368) failed for all 115 backward dates.
+#
+# So this job covers ONLY the achievable overlap with the det comparison:
+# 2025-07-02 -> 2026-03-08 (~8 months, not a full year). MAM is dropped from
+# the season split below because that window only contributes ~8 sparse days
+# (2026-03-01 -> 2026-03-08) of MAM-labelled data — not a meaningful sample.
+# DJF/JJA/SON are still scored (JJA is missing June but July+August are fully
+# sampled).
+#
+# Retrieves regridded to 0.25/0.25 with conservative (grid-box-average)
+# interpolation, matching the deterministic regrid comparison.
+# ============================================================================
+
+variable: "tp24"
+start_date: "2025-07-02"
+end_date: "2026-03-08"
+mode: "ensemble"
+backend: "local"
+steps: [24, 48, 72, 96, 120, 144, 168, 192, 216, 240]
+skip_extraction_if_exists: true
+skip_scoring_if_exists: false
+
+# ============================================================================
+# ENSEMBLE SETTINGS
+# ============================================================================
+ensemble:
+  n_members: 50
+  include_control: true
+
+# ============================================================================
+# STEP 1: READ DATA — retrieve ENS from MARS (forecasts) + STVL (obs)
+# ============================================================================
+read_data:
+  forecast_model1:                       # operational IFS-ENS (reference)
+    name: "ifsens4aifs"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: od
+      stream: enfo
+      expver: "1"
+      levtype: sfc
+      time: "00"
+      number: "1/to/50"
+      grid: "0.25/0.25"
+      interpolation: "grid-box-average"   # conservative, matches the existing 0.25deg product
+      base_path: "/ec/vol/destine2/scorecards4extremes/precip/forecast_ENS/raw"
+      control_source:
+        mode: "own"
+
+  forecast_model2:                       # operational AIFS-ENS (evaluated)
+    name: "aifs_ens"
+    source: "mars"
+    unit_conversion_factor: 1.0          # AIFS tp already in kg m-2 (= mm)
+    mars:
+      class: ai
+      stream: enfo
+      expver: "1"
+      model: "aifs-ens"
+      levtype: sfc
+      time: "00"
+      number: "1/to/50"
+      grid: "0.25/0.25"
+      interpolation: "grid-box-average"
+      base_path: "/ec/vol/destine2/scorecards4extremes/precip/forecast_ENS/raw"
+      control_source:
+        mode: "own"
+
+  observation_source: "stvl"
+  stvl:
+    sources: ["synop", "hdobs"]
+    base_path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_ens_mars_p99obsclim_aifsvsifs_regrid025_matchdet"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/aifs_lsm.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/aifs_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  lead_times: null
+  season: ["DJF", "JJA", "SON"]      # MAM excluded: only ~8 sparse days in range
+  orography_type: ["low", "mid", "high"]
+  orography_ranges:
+    low:  [0, 40]
+    mid:  [40, 120]
+    high: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "tp"
+    percentile: 99
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  ensemble:
+    - "twCRPS"
+    - "fCRPS"
+    - "Brier"
+    - "BSS"
+    - "tw_quantile_score"
+    - "tw_quantile_score_q099"
+    - "tw_quantile_score_q0995"
+    - "tw_quantile_score_q0999"
+    - "extreme_spread_skill_ratio"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_ens_mars_p99obsclim_aifsvsifs_regrid025_matchdet"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"

@@ -3,6 +3,32 @@ Shared utility functions
 """
 
 
+# Variables that are physically 2-metre temperature but scored with a daily
+# MAX (mx2t) or MIN (mn2t) aggregation of the 6-hourly 2t, instead of the
+# daily MEAN used for '2t'. They are NOT retrieved as native mx2t/mn2t fields
+# (many models, e.g. AIFS, do not archive those) — they reuse ordinary 2t.
+TEMPERATURE_VARIABLES = ('2t', 'mx2t', 'mn2t')
+
+
+def physical_variable(variable):
+    """Underlying physical field for a scored variable.
+
+    mx2t/mn2t are derived from ordinary 6-hourly 2t (max/min per day), so for
+    retrieval, GRIB/obs file IO, unit conversion, QC and lapse-rate correction
+    they behave exactly like '2t'. Identity for every other variable.
+    """
+    return '2t' if variable in ('mx2t', 'mn2t') else variable
+
+
+def daily_aggregation_method(variable):
+    """How sub-daily values collapse to one value per forecast day."""
+    if variable == 'mx2t':
+        return 'max'
+    if variable == 'mn2t':
+        return 'min'
+    return 'mean'
+
+
 def compute_steps(config):
     """
     Derive the list of forecast lead-time steps (hours) a config needs.
@@ -68,7 +94,7 @@ def format_threshold_string(config):
         threshold_value = threshold_cfg['fixed']['value']
         if variable == 'tp24':
             return f"{threshold_value:.0f}mm"
-        elif variable == '2t':
+        elif variable in ('2t', 'mx2t', 'mn2t'):
             return f"{threshold_value:.1f}C"
         elif variable == '10ff':
             return f"{threshold_value:.1f}ms"

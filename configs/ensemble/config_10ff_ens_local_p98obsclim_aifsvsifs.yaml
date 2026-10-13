@@ -9,7 +9,7 @@
 
 variable: "10ff"
 start_date: "2025-07-02"
-end_date: "2026-03-08"
+end_date: "2026-07-01"
 mode: "ensemble"
 steps: [6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90, 96, 102, 108, 114, 120, 126, 132, 138, 144, 150, 156, 162, 168, 174, 180, 186, 192, 198, 204, 210, 216, 222, 228, 234, 240]
 skip_extraction_if_exists: false
@@ -55,7 +55,7 @@ preprocess:
 # STEP 3: EXTRACT POINT DATA
 # ============================================================================
 extract_points:
-  output_path: "./extracted_points/10ff_ens_local_p99obsclim_ifs4aifs"
+  output_path: "./extracted_points/10ff_ens_local_p98obsclim_aifsvsifs"
   save_format: "pandas"
   area: "europe"
 
@@ -84,8 +84,6 @@ filter:
     high: [120, 3000]
   remove_coastal_stations: false
   coastal_lsm_threshold: 0.9
-  remove_outliers: false
-  outlier_threshold_std: 5.0
 
 # ============================================================================
 # STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
@@ -96,7 +94,7 @@ threshold:
   local_obs_climatology:
     path: "./obs_clim_local"
     parameter: "10ff"
-    percentile: 99
+    percentile: 98
     window_days: 1
     n_years: 20
     first_year: 2005
@@ -135,7 +133,7 @@ bootstrap:
 # STEP 8: SAVE RESULTS
 # ============================================================================
 save:
-  output_directory: "./results/10ff_ens_local_p99obsclim_ifs4aifs"
+  output_directory: "./results/10ff_ens_local_p98obsclim_aifsvsifs"
   save_scores_csv: true
   save_forecast_obs_pairs: false
 

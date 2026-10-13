@@ -17,6 +17,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import season_utils
 from utils import format_threshold_string as _format_threshold_string
+from utils import physical_variable as _physical_variable
 
 
 def load_extracted_data(variable, point_data_path, start_date, end_date, steps, fc1_name, fc2_name, save_format='pandas', config=None):
@@ -300,7 +301,7 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
 
     # Apply lapse-rate correction for 2t, if enabled in config
     apply_lapse = preprocess_settings.get('lapse_rate_correction', True)
-    if config['variable'] == '2t' and apply_lapse:
+    if _physical_variable(config['variable']) == '2t' and apply_lapse:
         if has_uncorrected_columns:
             print(f"  ⚠️  Note: Lapse-rate correction already applied during extraction (Step 3)")
             print(f"     Skipping to avoid double-correction. Heights stored: fc1_height, fc2_height.")
@@ -310,7 +311,7 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
             print(f"  Applied lapse-rate correction ({lapse_rate} K/m) to both models")
         else:
             print(f"  ⚠️  Lapse-rate correction skipped: missing height columns (fc1_height/obs_height)")
-    elif config['variable'] == '2t' and not apply_lapse:
+    elif _physical_variable(config['variable']) == '2t' and not apply_lapse:
         print(f"  Lapse-rate correction disabled in config (lapse_rate_correction: false); using raw model heights")
     
     print(f"\n  Initial dataset: {len(data)} rows")
@@ -342,6 +343,7 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
             # Define named areas [North, West, South, East]
             areas = {
                 'europe': [68, -15, 27, 50],
+                'france': [51.5, -5.5, 42.0, 8.5],
                 'nh_extratropics': [90, -180, 20, 180],
                 'tropics': [20, -180, -20, 180]
             }
@@ -437,23 +439,13 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
     else:
         print(f"  Coastal filter: disabled (keeping all stations including coastal)")
     
-    # Quality control - remove outliers (both models)
-    # NOTE: For precipitation (tp24), forecast outlier removal is SKIPPED because
-    # precipitation is heavily right-skewed and 5*std cutoff removes genuine
-    # extreme events (the very events we want to verify). The max_valid_precipitation
-    # QC below already handles sensor errors.
-    if cfg.get('remove_outliers', False) and config['variable'] != 'tp24':
-        threshold_std = cfg.get('outlier_threshold_std', 5.0)
-        fc1_mean = data['fc1_value'].mean()
-        fc1_std = data['fc1_value'].std()
-        fc2_mean = data['fc2_value'].mean()
-        fc2_std = data['fc2_value'].std()
-        before = len(data)
-        # Remove outliers from either model
-        data = data[(np.abs(data['fc1_value'] - fc1_mean) < threshold_std * fc1_std) & 
-                    (np.abs(data['fc2_value'] - fc2_mean) < threshold_std * fc2_std)]
-        print(f"  Outlier removal: {len(data)} rows (removed {before - len(data)})")
-    
+    # Quality control
+    # NOTE: The Gaussian mean±N·std outlier filter has been REMOVED entirely. It
+    # is statistically invalid for skewed fields (e.g. tp24), where the mean+N·std
+    # cutoff strips the genuine extreme tail — the very events we verify. The
+    # physical-validity caps below (max_valid_precipitation, temperature bounds)
+    # handle real sensor errors for all variables.
+
     # Variable-specific quality control
     if config['variable'] == 'tp24':
         # Remove anomalously high precipitation observations (likely sensor errors or outliers)
@@ -463,7 +455,7 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
             data = data[data['obs_value'] <= max_precip]
             print(f"  Precipitation QC (max={max_precip}mm): {len(data)} rows (removed {before - len(data)})")
     
-    if config['variable'] == '2t':
+    if _physical_variable(config['variable']) == '2t':
         # Remove extreme temperature outliers (likely missing data flags or sensor errors)
         min_temp = cfg.get('min_valid_temperature', -60.0)  # Default: -60°C
         max_temp = cfg.get('max_valid_temperature', 60.0)   # Default: +60°C

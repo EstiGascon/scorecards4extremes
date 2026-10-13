@@ -74,6 +74,7 @@ from case_studies.case_study_utils import (
     classify_events,
     classify_events_probabilistic,
     compute_date_metrics,
+    aggregate_subdaily_to_daily,
 )
 
 
@@ -257,10 +258,24 @@ def load_date_slice(config: dict, date_str: str, day: int,
         ranges = (config.get("filter", {}).get("orography_ranges", {}))
         lo, hi = ranges.get(orog, {"low":(0,40),"mid":(40,120),"high":(120,9999)}.get(orog,(0,9999)))
         df = df[(df["sdfor"] >= lo) & (df["sdfor"] <= hi)]
+    # Collapse sub-daily steps to the daily statistic (max for mx2t) so the maps
+    # and counts match the scorecard rather than showing each 6-hourly step.
+    df = aggregate_subdaily_to_daily(df, config)
     return df.reset_index(drop=True)
 
 
 # ─── Map panel ────────────────────────────────────────────────────────────────
+
+def _active_marker_base():
+    """Marker base size scaled to the active map extent so dots don't overlap on
+    wide maps (e.g. nh_extratropics) while staying prominent on a Europe zoom."""
+    lon_span = abs(_ACTIVE_LON[1] - _ACTIVE_LON[0])
+    lat_span = abs(_ACTIVE_LAT[1] - _ACTIVE_LAT[0])
+    eur_lon  = EUROPE_LON[1] - EUROPE_LON[0]
+    eur_lat  = EUROPE_LAT[1] - EUROPE_LAT[0]
+    scale = ((eur_lon / max(lon_span, 1)) * (eur_lat / max(lat_span, 1))) ** 0.5
+    return float(np.clip(MARKER_SIZE_SCALE * scale, 9, MARKER_SIZE_SCALE))
+
 
 def _compute_marker_sizes(values, T, event_type, masks, base=MARKER_SIZE_SCALE):
     """Return per-station marker sizes scaled by exceedance magnitude."""
@@ -279,13 +294,15 @@ def _compute_marker_sizes(values, T, event_type, masks, base=MARKER_SIZE_SCALE):
 
 
 def draw_station_map(ax, lats, lons, obs, fc, T, event_type, model_name,
-                     title_prefix=""):
+                     title_prefix="", marker_base=None, title_fs=13):
     """Draw hit/miss/FA scatter map with coastlines and country borders."""
     _add_map_features(ax)
     _add_gridlines(ax)
 
+    if marker_base is None:
+        marker_base = _active_marker_base()
     masks = classify_events(obs, fc, T, event_type)
-    sizes = _compute_marker_sizes(fc, T, event_type, masks)
+    sizes = _compute_marker_sizes(fc, T, event_type, masks, base=marker_base)
 
     order = ["correct_neg", "hit", "miss", "false_alarm"]
     for cat in order:
@@ -295,7 +312,7 @@ def draw_station_map(ax, lats, lons, obs, fc, T, event_type, model_name,
         ax.scatter(
             lons[m], lats[m],
             c=COLORS[cat], s=sizes[m],
-            alpha=0.70 if cat == "correct_neg" else 0.88,
+            alpha=0.60 if cat == "correct_neg" else 0.85,
             linewidths=0.2, edgecolors="white",
             label=f"{LABELS[cat]} (n={m.sum()})",
             transform=PROJ,
@@ -311,7 +328,7 @@ def draw_station_map(ax, lats, lons, obs, fc, T, event_type, model_name,
         f"POD={pod:.2f}  FAR={far:.2f}  "
         f"Hits={masks['hit'].sum()}  "
         f"Misses={masks['miss'].sum()}  FA={masks['false_alarm'].sum()}",
-        fontsize=12, pad=5,
+        fontsize=title_fs, pad=6,
     )
     return masks
 
@@ -449,18 +466,38 @@ def make_case_study_figure(lats, lons, obs, fc1_cls, fc2_cls, T_v, event_type,
                             config: dict, date_str: str, day: int,
                             model1_name: str, model2_name: str,
                             extra_title: str = "") -> plt.Figure:
-    fig = plt.figure(figsize=(22, 16))
-    gs  = fig.add_gridspec(2, 2, hspace=0.35, wspace=0.22,
-                            left=0.04, right=0.97, top=0.94, bottom=0.08)
-    ax_m1   = fig.add_subplot(gs[0, 0], projection=PROJ)
-    ax_m2   = fig.add_subplot(gs[0, 1], projection=PROJ)
-    ax_bars = fig.add_subplot(gs[1, 0])
-    ax_tbl  = fig.add_subplot(gs[1, 1])
+    # Wide/short extents (e.g. nh_extratropics, global) look tiny in a 2x2 grid,
+    # so give each map its own full-width row and shrink markers to match.
+    lon_span = abs(_ACTIVE_LON[1] - _ACTIVE_LON[0])
+    lat_span = abs(_ACTIVE_LAT[1] - _ACTIVE_LAT[0])
+    wide = (lon_span / max(lat_span, 1)) > 2.2
+    marker_base = _active_marker_base()
 
+    if wide:
+        fig = plt.figure(figsize=(26, 20))
+        gs  = fig.add_gridspec(3, 2, height_ratios=[1.0, 1.0, 1.15],
+                               hspace=0.30, wspace=0.16,
+                               left=0.03, right=0.98, top=0.93, bottom=0.07)
+        ax_m1   = fig.add_subplot(gs[0, :], projection=PROJ)
+        ax_m2   = fig.add_subplot(gs[1, :], projection=PROJ)
+        ax_bars = fig.add_subplot(gs[2, 0])
+        ax_tbl  = fig.add_subplot(gs[2, 1])
+    else:
+        fig = plt.figure(figsize=(22, 16))
+        gs  = fig.add_gridspec(2, 2, hspace=0.35, wspace=0.22,
+                                left=0.04, right=0.97, top=0.94, bottom=0.08)
+        ax_m1   = fig.add_subplot(gs[0, 0], projection=PROJ)
+        ax_m2   = fig.add_subplot(gs[0, 1], projection=PROJ)
+        ax_bars = fig.add_subplot(gs[1, 0])
+        ax_tbl  = fig.add_subplot(gs[1, 1])
+
+    title_fs = 19 if wide else 13
     draw_station_map(ax_m1, lats, lons, obs, fc1_cls, T_v, event_type,
-                     model1_name, title_prefix="Model 1: ")
+                     model1_name, title_prefix="Model 1: ", marker_base=marker_base,
+                     title_fs=title_fs)
     draw_station_map(ax_m2, lats, lons, obs, fc2_cls, T_v, event_type,
-                     model2_name, title_prefix="Model 2: ")
+                     model2_name, title_prefix="Model 2: ", marker_base=marker_base,
+                     title_fs=title_fs)
     draw_exceedance_bars(ax_bars, obs, fc1_mean, fc2_mean, T_v, event_type,
                           model1_name, model2_name)
     draw_stats_table(ax_tbl, metrics, model1_name, model2_name)
@@ -472,7 +509,7 @@ def make_case_study_figure(lats, lons, obs, fc1_cls, fc2_cls, T_v, event_type,
              f"|  p{pct} per-station threshold")
     if extra_title:
         title += f"\n{extra_title}"
-    fig.suptitle(title, fontsize=13, weight="bold", y=0.975)
+    fig.suptitle(title, fontsize=21 if wide else 14, weight="bold", y=0.975)
 
     # Horizontal figure-level legend at the bottom
     import matplotlib.patches as mpatches
@@ -536,24 +573,41 @@ def make_values_figure(df_v: pd.DataFrame, T_v: np.ndarray,
         (fc2, fc2_ext, f"Model 2: {model2_name}"),
     ]
 
-    fig = plt.figure(figsize=(22, 9))
-    gs  = fig.add_gridspec(1, 3, wspace=0.06,
-                            left=0.03, right=0.90, top=0.88, bottom=0.10)
-    cax = fig.add_axes([0.915, 0.18, 0.016, 0.62])
+    # Wide/short extents (nh_extratropics, global) are unreadable in a 1x3 row,
+    # so stack the three panels vertically at full width.
+    lon_span = abs(_ACTIVE_LON[1] - _ACTIVE_LON[0])
+    lat_span = abs(_ACTIVE_LAT[1] - _ACTIVE_LAT[0])
+    wide     = (lon_span / max(lat_span, 1)) > 2.2
+    s_bg, s_ext = (14, 60) if wide else (10, 45)
+
+    if wide:
+        fig = plt.figure(figsize=(24, 22))
+        gs  = fig.add_gridspec(3, 1, hspace=0.16,
+                                left=0.05, right=0.90, top=0.93, bottom=0.06)
+        cax = fig.add_axes([0.915, 0.20, 0.014, 0.58])
+    else:
+        fig = plt.figure(figsize=(22, 9))
+        gs  = fig.add_gridspec(1, 3, wspace=0.06,
+                                left=0.03, right=0.90, top=0.88, bottom=0.10)
+        cax = fig.add_axes([0.915, 0.18, 0.016, 0.62])
 
     unit = "°C" if ("2t" in var or "temp" in var) else \
            "mm" if ("tp" in var or "precip" in var) else ""
 
     sc_last = None
-    for col, (vals, ext_mask, panel_title) in enumerate(panels):
-        ax = fig.add_subplot(gs[0, col], projection=PROJ)
+    for idx, (vals, ext_mask, panel_title) in enumerate(panels):
+        if wide:
+            ax = fig.add_subplot(gs[idx, 0], projection=PROJ)
+            _add_gridlines(ax, left_labels=True, bottom_labels=(idx == len(panels) - 1))
+        else:
+            ax = fig.add_subplot(gs[0, idx], projection=PROJ)
+            _add_gridlines(ax, left_labels=(idx == 0), bottom_labels=True)
         _add_map_features(ax)
-        _add_gridlines(ax, left_labels=(col == 0), bottom_labels=True)
 
         # All stations — small background dots
         sc = ax.scatter(
             lons, lats, c=vals, cmap=cmap, vmin=vmin, vmax=vmax,
-            s=10, alpha=0.72, linewidths=0, edgecolors="none",
+            s=s_bg, alpha=0.72, linewidths=0, edgecolors="none",
             transform=PROJ, zorder=3,
         )
         # Extreme stations — larger with black outline
@@ -561,13 +615,13 @@ def make_values_figure(df_v: pd.DataFrame, T_v: np.ndarray,
             ax.scatter(
                 lons[ext_mask], lats[ext_mask],
                 c=vals[ext_mask], cmap=cmap, vmin=vmin, vmax=vmax,
-                s=45, alpha=0.95, linewidths=0.6, edgecolors="black",
+                s=s_ext, alpha=0.95, linewidths=0.6, edgecolors="black",
                 transform=PROJ, zorder=4,
             )
         pct_ext = 100 * ext_mask.sum() / max(len(vals), 1)
         ax.set_title(f"{panel_title}\n"
                      f"{ext_mask.sum()} extreme stations ({pct_ext:.1f}%,  black outline)",
-                     fontsize=12, pad=6)
+                     fontsize=19 if wide else 12, pad=6)
         sc_last = sc
 
     # Single shared colourbar
@@ -581,7 +635,7 @@ def make_values_figure(df_v: pd.DataFrame, T_v: np.ndarray,
              f"|  Black outline = p{pct_cfg} extreme events ({event_lbl} threshold)")
     if extra_title:
         title += f"\n{extra_title}"
-    fig.suptitle(title, fontsize=13, weight="bold", y=0.975)
+    fig.suptitle(title, fontsize=21 if wide else 14, weight="bold", y=0.975)
 
     # Horizontal legend at bottom
     import matplotlib.lines as mlines
@@ -681,8 +735,11 @@ def make_grib_overlay_figure(df_v: pd.DataFrame, T_v: np.ndarray,
     event_type = get_event_type(config)
     pct_cfg    = config.get("threshold", {}).get("local_obs_climatology", {}).get("percentile", "?")
 
-    # Forecast steps for this day from the parquet data
-    steps_set = set(int(s) for s in df_v["step"].unique())
+    # Forecast steps that constitute this forecast day. df_v has been collapsed to
+    # the daily statistic, so its 'step' is a canonical midpoint; reconstruct the
+    # real sub-daily steps from the day index and the lead-time frequency instead.
+    freq = int(config.get("lead_time_frequency", 6) or 6)
+    steps_set = set(range((day - 1) * 24 + freq, day * 24 + 1, freq))
 
     # GRIB file paths from config
     src1 = config["read_data"]["forecast_model1"].get("source", "")

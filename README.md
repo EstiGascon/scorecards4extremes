@@ -58,7 +58,7 @@ python run.py my_config.yaml
     ├─ Step 5  src/threshold.py      Compute event threshold
     ├─ Step 6  src/det_scores.py /   Verification scores (ETS, PSS, twMAE, …)
     │          src/ens_scores.py
-    ├─ Step 7  src/bootstrap.py      95% confidence intervals
+    ├─ Step 7  (inside Step 6)       Date-block bootstrap 95% CIs
     ├─ Step 8  src/save.py           Write CSV results
     └─ Step 9  src/plot.py           Draw heatmap scorecards
 ```

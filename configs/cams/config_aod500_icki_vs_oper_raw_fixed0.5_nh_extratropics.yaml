@@ -62,7 +62,6 @@ filter:
   season: ["DJF", "MAM", "JJA", "SON"]
   orography_type: "all"             # parquet has no 'sdfor' column
   remove_coastal_stations: false    # parquet has no 'lsm' column
-  remove_outliers: false            # AOD is right-skewed; keep extremes
 
 # ============================================================================
 # STEP 5: THRESHOLD  (fixed 0.5, matches the pre-baked-parquet comparison config)

@@ -4,12 +4,12 @@ Unit tests for the pure metric functions used by the diagnostics scripts.
 These cover the numerical cores that are easy to get subtly wrong and hard to
 eyeball in a plot:
 
-  * ``twcrps_score``            (diagnostics/diagnose_twcrps_simple.py) — fair
+  * ``twcrps_score``            (diagnostics/ensemble/diagnose_twcrps_simple.py) — fair
                                  threshold-weighted CRPS.
-  * ``calculate_skill_scores`` (diagnostics/diagnose_extremes.py) — POD/FAR/CSI/
+  * ``calculate_skill_scores`` (diagnostics/deterministic/diagnose_extremes.py) — POD/FAR/CSI/
                                  PSS/ETS from a contingency table.
   * ``threshold_conditional_mae`` / ``threshold_conditional_mse``
-                                 (diagnostics/diagnose_extremes.py).
+                                 (diagnostics/deterministic/diagnose_extremes.py).
 
 Run with:  .venv/bin/python -m pytest tests/ -q
 """
@@ -20,11 +20,13 @@ import numpy as np
 import pytest
 
 # The diagnostics scripts import ``case_studies.case_study_utils`` (needs the repo
-# root on sys.path) and are themselves imported as top-level modules (needs the
-# diagnostics/ directory on sys.path).
+# root on sys.path) and are themselves imported as top-level modules (needs each
+# script's diagnostics/<category>/ directory on sys.path).
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO))
 sys.path.insert(0, str(_REPO / "diagnostics"))
+sys.path.insert(0, str(_REPO / "diagnostics" / "ensemble"))
+sys.path.insert(0, str(_REPO / "diagnostics" / "deterministic"))
 
 from diagnose_twcrps_simple import twcrps_score  # noqa: E402
 from diagnose_extremes import (  # noqa: E402

@@ -27,43 +27,99 @@ def _save_figure(output_dir, filename_stem, config=None):
 
 
 # All known score names in both deterministic and ensemble modes
-_DETERMINISTIC_SCORES = ['ETS', 'PSS', 'twMAE', 'twMAE_hits', 'twMAE_misses', 'twMAE_FA',
+_DETERMINISTIC_SCORES = ['ETS', 'PSS', 'SEDI', 'EDI', 'POD', 'FAR',
+                         'twMAE', 'twMAE_hits', 'twMAE_misses', 'twMAE_FA',
                          'twMAE_hit_mae', 'twMAE_miss_severity', 'twMAE_fa_severity',
-                         'twRMSE', 'bias', 'mae', 'rmse', 'correlation']
+                         'twRMSE', 'bias', 'mae', 'rmse', 'correlation', 'SEEPS']
 # Per-level tw_quantile_score keys: tw_quantile_score_q001/q005/q010 (below)
-# and tw_quantile_score_q090/q095/q098/q099 (above). The mean summary key is
+# and tw_quantile_score_q090/q095/q098/q099 (above) are the LEGACY default/override
+# levels (kept so old results/configs still plot). q0001/q0005/q0995/q0999 are the
+# current default deep-tail levels (at-or-beyond the extreme threshold's own
+# percentile; see src/ens_scores.py::_TW_QS_ALPHAS). The mean summary key is
 # tw_quantile_score. All are registered so _detect_plottable_scores finds them.
 _TW_QS_LEVEL_SCORES = [
     'tw_quantile_score_q001', 'tw_quantile_score_q005', 'tw_quantile_score_q010',
     'tw_quantile_score_q090', 'tw_quantile_score_q095', 'tw_quantile_score_q098',
     'tw_quantile_score_q099',
+    'tw_quantile_score_q0001', 'tw_quantile_score_q0005',
+    'tw_quantile_score_q0995', 'tw_quantile_score_q0999',
 ]
-_ENSEMBLE_SCORES = ['CRPS', 'twCRPS', 'Brier', 'BSS', 'tw_quantile_score', 'diagonal_score',
+_ENSEMBLE_SCORES = ['CRPS', 'twCRPS', 'twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA',
+                    'twCRPS_accuracy', 'twCRPS_spread',
+                    'count_hits_pct', 'count_misses_pct', 'count_FA_pct',
+                    'Brier', 'BSS', 'CRPSS', 'reliability',
+                    'tw_quantile_score', 'diagonal_score',
                     'ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_spread',
                     'extreme_spread_skill_ratio'] + _TW_QS_LEVEL_SCORES
 _ALL_KNOWN_SCORES = _DETERMINISTIC_SCORES + _ENSEMBLE_SCORES
 
-# Scores where lower is better (error metrics) - negative % diff = blue = better
+# Scores where lower is better (error metrics) - negative % diff = blue = better.
+# NOTE: 'bias'/'ens_mean_bias' are deliberately NOT here — they are signed, zero-crossing
+# quantities handled by _SIGNED_SCORES below (a relative-% of bias is meaningless).
 _ERROR_SCORES = {'twMAE', 'twMAE_hits', 'twMAE_misses', 'twMAE_FA',
                  'twMAE_hit_mae', 'twMAE_miss_severity', 'twMAE_fa_severity',
-                 'twRMSE', 'mae', 'rmse', 'bias', 'CRPS', 'twCRPS',
+                 'twRMSE', 'mae', 'rmse', 'CRPS', 'twCRPS', 'SEEPS',
+                 'twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA', 'twCRPS_accuracy',
+                 'count_misses_pct', 'count_FA_pct',
                  'tw_quantile_score', 'diagonal_score',
-                 'ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse'} | set(_TW_QS_LEVEL_SCORES)
+                 'ens_mean_mae', 'ens_mean_rmse'} | set(_TW_QS_LEVEL_SCORES)
 
 # Scores where HIGHER is better but using (fc2-fc1)/fc1 formula (not skill-score denominator).
 # positive % diff = fc2 better = blue. ens_spread > 1.0 K/m·s so (1-fc1) would flip sign.
 # extreme_spread_skill_ratio: R=1 is perfect; typical NWP is under-dispersive (R<1) so higher→better.
-_HIGHER_IS_BETTER_SCORES = {'ens_spread', 'extreme_spread_skill_ratio'}
+# twCRPS_spread: larger fair-spread term lowers twCRPS (twCRPS = accuracy - spread), so treat like ens_spread.
+# count_hits_pct: more hit cases (ensemble-mean correctly crossed T when obs did) is better.
+_HIGHER_IS_BETTER_SCORES = {'ens_spread', 'extreme_spread_skill_ratio', 'twCRPS_spread', 'count_hits_pct'}
 
 # Bounded error scores [0,1] where lower is better - use (fc1-fc2)/fc1 normalization
 # (like skill scores but with 0 as perfect instead of 1)
-_BOUNDED_ERROR_SCORES = {'Brier'}
+# FAR is here too: perfect = 0, so the (fc2-fc1)/(1-fc1) skill branch (perfect = 1) would
+# invert its normalisation. POD (perfect = 1) correctly stays in the skill branch.
+_BOUNDED_ERROR_SCORES = {'Brier', 'reliability', 'FAR'}
+
+# Signed, zero-crossing scores (bias). A relative % of a quantity whose target is 0 is
+# meaningless: (fc2-fc1)/fc1 explodes near zero bias and flips sign. These are compared
+# by the reduction in |bias|, normalised by the larger of the two |bias| values, so the
+# result is bounded to [-100, 100] with positive = model 2 less biased (better). They are
+# NOT in _ERROR_SCORES, so the colormap selection gives them the skill palette
+# (positive = blue = fc2 better), which matches this orientation.
+_SIGNED_SCORES = {'bias', 'ens_mean_bias'}
+
+
+def _signed_bias_pct(fc1, fc2):
+    """Relative reduction in |bias|: 100 * (|fc1| - |fc2|) / max(|fc1|, |fc2|).
+
+    Bounded to [-100, 100]; positive => model 2 has the smaller |bias| (better).
+    Returns 0 where both biases are ~0 (both effectively unbiased). Never divides by a
+    near-zero baseline, so it cannot explode the way (fc2-fc1)/fc1 does for bias.
+    """
+    a1 = np.abs(np.asarray(fc1, dtype=float))
+    a2 = np.abs(np.asarray(fc2, dtype=float))
+    denom = np.maximum(a1, a2)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        out = np.where(denom > 0, (a1 - a2) / np.where(denom > 0, denom, 1.0) * 100.0, 0.0)
+    return out
 
 # Human-readable display names for heatmap titles
 _SCORE_DISPLAY_NAMES = {
+    'POD':                     'POD (Probability of Detection)',
+    'FAR':                     'FAR (False Alarm Ratio)',
+    'SEDI':                    'SEDI (Symmetric Extremal Dependence Index)',
+    'EDI':                     'EDI (Extremal Dependence Index)',
+    'SEEPS':                   'SEEPS (Stable Equitable Error in Probability Space)',
+    'CRPSS':                   'CRPSS (CRPS skill vs climatology)',
+    'reliability':             'Reliability (Brier reliability component)',
     'twMAE_hits':              'twMAE — Hit contribution',
     'twMAE_misses':            'twMAE — Miss contribution',
     'twMAE_FA':                'twMAE — False Alarm contribution',
+    'twCRPS_hits':             'twCRPS — Hit contribution',
+    'twCRPS_misses':           'twCRPS — Miss contribution',
+    'twCRPS_FA':               'twCRPS — False Alarm contribution',
+    'twCRPS_accuracy':         'twCRPS — Accuracy term',
+    'twCRPS_spread':           'twCRPS — Spread term',
+    'count_hits_pct':          'Hit count (% of cases, no magnitude)',
+    'count_misses_pct':        'Miss count (% of cases, no magnitude)',
+    'count_FA_pct':            'False Alarm count (% of cases, no magnitude)',
     'tw_quantile_score':       'twQS (mean, extreme tail)',
     'tw_quantile_score_q001':  'twQS \u03b1=0.01 (cold extreme)',
     'tw_quantile_score_q005':  'twQS \u03b1=0.05 (cold extreme)',
@@ -72,11 +128,22 @@ _SCORE_DISPLAY_NAMES = {
     'tw_quantile_score_q095':  'twQS \u03b1=0.95 (warm extreme)',
     'tw_quantile_score_q098':  'twQS \u03b1=0.98 (warm extreme)',
     'tw_quantile_score_q099':  'twQS \u03b1=0.99 (warm extreme)',
+    'tw_quantile_score_q0001': 'twQS \u03b1=0.001 (deep cold extreme)',
+    'tw_quantile_score_q0005': 'twQS \u03b1=0.005 (deep cold extreme)',
+    'tw_quantile_score_q0995': 'twQS \u03b1=0.995 (deep warm extreme)',
+    'tw_quantile_score_q0999': 'twQS \u03b1=0.999 (deep warm extreme)',
 }
 
 # Per-score colorbar limits (±%) for heatmaps.
 # Ensemble scores tend to show larger relative differences than deterministic ones.
 _SCORE_COLOR_LIMITS = {
+    'SEDI':                   20,
+    'EDI':                    20,
+    'bias':                   50,   # % reduction in |bias| (bounded to ±100)
+    'ens_mean_bias':          50,
+    'SEEPS':                  30,
+    'CRPSS':                  20,
+    'reliability':            50,
     'twMAE':                  50,
     'twMAE_hits':             50,
     'twMAE_misses':           50,
@@ -92,7 +159,19 @@ _SCORE_COLOR_LIMITS = {
     'tw_quantile_score_q095': 20,
     'tw_quantile_score_q098': 20,
     'tw_quantile_score_q099': 20,
-    'twCRPS':                 20,
+    'tw_quantile_score_q0001': 20,
+    'tw_quantile_score_q0005': 20,
+    'tw_quantile_score_q0995': 20,
+    'tw_quantile_score_q0999': 20,
+    'twCRPS':                 50,
+    'twCRPS_hits':            30,
+    'twCRPS_misses':          30,
+    'twCRPS_FA':              30,
+    'twCRPS_accuracy':        20,
+    'twCRPS_spread':          20,
+    'count_hits_pct':         50,
+    'count_misses_pct':       50,
+    'count_FA_pct':           50,
     'CRPS':                   30,
     'diagonal_score':         30,
 }
@@ -175,7 +254,7 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
         return
     
     # Units for display
-    units = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     
     # Orography suffix for filename and title
@@ -222,7 +301,10 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
         pass
     
     # Calculate percentage difference based on score type
-    if (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
+    if score_type in _SIGNED_SCORES:
+        # Signed scores (bias): reduction in |bias|, bounded & sign-correct (positive=fc2 better)
+        df['pct_diff'] = _signed_bias_pct(df[fc1_col].values, df[fc2_col].values)
+    elif (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
             or score_type in _HIGHER_IS_BETTER_SCORES):
         # Error metrics and spread: use relative difference (fc2-fc1)/fc1
         df['pct_diff'] = ((df[fc2_col] - df[fc1_col]) / df[fc1_col].replace(0, np.nan)) * 100
@@ -341,7 +423,7 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
     ax.set_ylabel("Forecast Period", fontsize=11)
     
     # Title
-    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
+    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
     var_display = var_display_map.get(variable, variable)
     orog_title = f" ({orog_type.upper()} terrain)" if orog_type else ""
     score_display = _SCORE_DISPLAY_NAMES.get(score_type, score_type.upper())
@@ -361,7 +443,7 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
 
 def plot_summary(data, results_by_leadtime, variable, threshold, output_dir, model_names, orog_type=None, config=None):
     """Create comprehensive summary plot comparing both models"""
-    units = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     
     fig = plt.figure(figsize=(18, 12))
@@ -482,7 +564,7 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
             return
     
     # Units for display
-    units = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     
     # Get columns
@@ -551,7 +633,9 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
         
         # Calculate percentage difference based on score type
         df = results_by_leadtime.copy()
-        if (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
+        if score_type in _SIGNED_SCORES:
+            df['pct_diff'] = _signed_bias_pct(df[fc1_col].values, df[fc2_col].values)
+        elif (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
                 or score_type in _HIGHER_IS_BETTER_SCORES):
             df['pct_diff'] = ((df[fc2_col] - df[fc1_col]) / df[fc1_col].replace(0, np.nan)) * 100
         else:
@@ -689,13 +773,13 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
     # (Already done in loop above)
     
     # Overall title
-    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
+    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
     var_display = var_display_map.get(variable, variable)
     # If season is None, it means we're showing all seasons in columns
     season_title = f" - {season}" if _blank_if_all(season) else ""
     
     # Add threshold info to title
-    units = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     threshold_info = ""
     threshold_method = config.get('threshold', {}).get('method', 'fixed') if config else 'fixed'
@@ -744,7 +828,7 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
             print(f"  ⚠ Skipping {score_type} smooth heatmap – missing diff column")
             return
 
-    units = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
 
     fc1_col = f'{score_type}_fc1'
@@ -842,7 +926,9 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
             pass
 
         # Percentage difference
-        if (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
+        if score_type in _SIGNED_SCORES:
+            rlt['pct_diff'] = _signed_bias_pct(rlt[fc1_col].values, rlt[fc2_col].values)
+        elif (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
                 or score_type in _HIGHER_IS_BETTER_SCORES):
             rlt['pct_diff'] = ((rlt[fc2_col] - rlt[fc1_col]) / rlt[fc1_col].replace(0, np.nan)) * 100
         else:
@@ -871,12 +957,29 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
         else:
             pivot_nexc = pd.Series([np.nan] * len(row_keys), index=row_keys)
 
+        # For the hit/miss/FA components (which sum exactly to the total score),
+        # also compute each cell's % share of the total twCRPS/twMAE budget so
+        # the dominant failure mode is visible directly on the heatmap, not just
+        # via the raw fc2 corner value.
+        if score_type in ('twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA'):
+            total_col = 'twCRPS_fc2'
+        elif score_type in ('twMAE_hits', 'twMAE_misses', 'twMAE_FA'):
+            total_col = 'twMAE_fc2'
+        else:
+            total_col = None
+        if total_col and total_col in rlt.columns:
+            rlt['_budget_share'] = (rlt[fc2_col] / rlt[total_col].replace(0, np.nan)) * 100
+            pivot_share = rlt.pivot_table(values='_budget_share', index=pivot_index, aggfunc='first').reindex(row_keys)
+        else:
+            pivot_share = pd.Series([np.nan] * len(row_keys), index=row_keys)
+
         combined_data.append({
             'pct_diff':      pivot_diff.iloc[:, 0] if isinstance(pivot_diff, pd.DataFrame) and len(pivot_diff.columns) > 0 else pivot_diff if not isinstance(pivot_diff, pd.DataFrame) else pd.Series(np.nan, index=row_keys),
             'fc2_scores':    pivot_fc2.iloc[:, 0]  if isinstance(pivot_fc2,  pd.DataFrame) and len(pivot_fc2.columns) > 0 else pivot_fc2 if not isinstance(pivot_fc2, pd.DataFrame) else pd.Series(np.nan, index=row_keys),
             'thresholds':    pivot_thr.iloc[:, 0]  if isinstance(pivot_thr,  pd.DataFrame) and len(pivot_thr.columns) > 0 else pivot_thr if not isinstance(pivot_thr, pd.DataFrame) else pd.Series(np.nan, index=row_keys),
             'significance':  pivot_sig.iloc[:, 0]  if isinstance(pivot_sig,  pd.DataFrame) and len(pivot_sig.columns) > 0 else pivot_sig if not isinstance(pivot_sig, pd.DataFrame) else pd.Series(np.nan, index=row_keys),
             'n_exceedances': pivot_nexc.iloc[:, 0] if isinstance(pivot_nexc, pd.DataFrame) and len(pivot_nexc.columns) > 0 else pivot_nexc if not isinstance(pivot_nexc, pd.DataFrame) else pd.Series(np.nan, index=row_keys),
+            'budget_share':  pivot_share.iloc[:, 0] if isinstance(pivot_share, pd.DataFrame) and len(pivot_share.columns) > 0 else pivot_share if not isinstance(pivot_share, pd.DataFrame) else pd.Series(np.nan, index=row_keys),
         })
 
     # ---- Build matrix ----
@@ -914,6 +1017,8 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
             thr_val    = combined_data[col_idx]['thresholds'].iloc[row_idx]
             n_exc      = combined_data[col_idx]['n_exceedances'].iloc[row_idx]
             is_sig     = combined_data[col_idx]['significance'].iloc[row_idx]
+            budget_share = combined_data[col_idx].get('budget_share', pd.Series(dtype=float))
+            budget_share = budget_share.iloc[row_idx] if row_idx < len(budget_share) else np.nan
 
             if not np.isnan(pct_diff):
                 # Centre: main percentage value
@@ -938,6 +1043,14 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
                 ax.text(col_idx + 0.45, row_idx + 0.44, f'{fc2_score:.2f}',
                         ha='right', va='bottom', fontsize=small_fontsize,
                         color='darkblue', weight='normal')
+
+            if not np.isnan(budget_share):
+                # Top-left: this component's % share of the total twCRPS budget
+                # (hits+misses+FA sum to 100%) — reveals the dominant failure mode
+                # without needing to compare raw values across separate heatmap files.
+                ax.text(col_idx - 0.45, row_idx - 0.35, f'{budget_share:.0f}%',
+                        ha='left', va='top', fontsize=tiny_fontsize,
+                        style='italic', color='teal')
 
             # Significance border
             if is_sig:
@@ -984,11 +1097,11 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
             ax.axvline(x=i - 0.5, ymin=0, ymax=1, color='white', linewidth=2, zorder=1000)
 
     # ---- Title ----
-    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
+    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
     var_display = var_display_map.get(variable, variable)
     season_title = f" - {season}" if _blank_if_all(season) else ""
 
-    units = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     threshold_info = ""
     threshold_method = config.get('threshold', {}).get('method', 'fixed') if config else 'fixed'
@@ -1143,12 +1256,24 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
         fc2_col = f'{score_type}_fc2'
         sig_col = f'{score_type}_is_significant'
 
+        # A condition (season/orography) with too few samples can yield an
+        # empty by_leadtime table; pivot_table on 0 rows returns a DataFrame
+        # with 0 columns, so a plain .iloc[:, 0] would raise IndexError.
+        def _pivot_col(pivot, index, fill=np.nan):
+            if isinstance(pivot, pd.DataFrame):
+                if pivot.shape[1] == 0:
+                    return pd.Series([fill] * len(index), index=index)
+                return pivot.iloc[:, 0]
+            return pivot
+
         # ---- Collect per-column data ----
         combined_data = []
         for result_set in all_results:
             rlt = result_set['results']['by_leadtime'].copy()
 
-            if (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
+            if score_type in _SIGNED_SCORES:
+                rlt['pct_diff'] = _signed_bias_pct(rlt[fc1_col].values, rlt[fc2_col].values)
+            elif (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
                     or score_type in _HIGHER_IS_BETTER_SCORES):
                 rlt['pct_diff'] = ((rlt[fc2_col] - rlt[fc1_col]) / rlt[fc1_col].replace(0, np.nan)) * 100
             else:
@@ -1167,7 +1292,10 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
             if 'threshold' in rlt.columns:
                 pivot_thr = rlt.pivot_table(values='threshold', index='lead_time', aggfunc='first').reindex(lead_times)
                 if threshold_value_for_plot is None:
-                    v = pivot_thr.iloc[0, 0] if isinstance(pivot_thr, pd.DataFrame) else pivot_thr.iloc[0]
+                    if isinstance(pivot_thr, pd.DataFrame) and pivot_thr.shape[1] == 0:
+                        v = threshold_value
+                    else:
+                        v = pivot_thr.iloc[0, 0] if isinstance(pivot_thr, pd.DataFrame) else pivot_thr.iloc[0]
                     threshold_value_for_plot = v
             else:
                 pivot_thr = pd.Series([threshold_value] * num_rows, index=lead_times)
@@ -1175,9 +1303,9 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
                     threshold_value_for_plot = threshold_value
 
             combined_data.append({
-                'pct_diff':     pivot_diff.iloc[:, 0] if isinstance(pivot_diff, pd.DataFrame) else pivot_diff,
-                'fc2_scores':   pivot_fc2.iloc[:, 0]  if isinstance(pivot_fc2,  pd.DataFrame) else pivot_fc2,
-                'significance': pivot_sig.iloc[:, 0]  if isinstance(pivot_sig,  pd.DataFrame) else pivot_sig,
+                'pct_diff':     _pivot_col(pivot_diff, lead_times),
+                'fc2_scores':   _pivot_col(pivot_fc2,  lead_times),
+                'significance': _pivot_col(pivot_sig,  lead_times, fill=False),
             })
 
         # ---- Plot ----
@@ -1264,9 +1392,9 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
                      fontsize=label_fs + 1, fontweight='bold', pad=16)
 
     # Overall title
-    var_display_map = {'2t': '2m Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
+    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
     var_display = var_display_map.get(variable, variable)
-    units_map   = {'2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units_map   = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
 
     threshold_info = ''
     if config:

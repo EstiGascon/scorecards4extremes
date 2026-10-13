@@ -62,7 +62,6 @@ filter:
   season: "all"
   orography_type: "all"              # parquet has no 'sdfor' column -> no terrain stratification
   remove_coastal_stations: false     # parquet has no 'lsm' column
-  remove_outliers: false             # AOD is right-skewed; do NOT strip real extremes
 
 # ============================================================================
 # STEP 5: THRESHOLD  (fixed 0.2, high-AOD extremes)

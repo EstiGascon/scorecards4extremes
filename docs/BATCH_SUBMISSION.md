@@ -28,7 +28,7 @@ For lightweight deterministic runs (≤ 3 months, single variable) 64 GB / 4 CPU
 ## Interactive memory limit
 
 Interactive sessions on ECMWF HPC are limited to 8 GB. This is enough for:
-- Running diagnostics (`diagnostics/diagnose_extremes.py`, `diagnostics/plot_qq_extremes.py`)
+- Running diagnostics (`diagnostics/deterministic/diagnose_extremes.py`, `diagnostics/qq/plot_qq_extremes.py`)
 - Deterministic runs over ≤ 2 months
 
 For full verification periods always use `sbatch`.

@@ -59,6 +59,7 @@ from case_studies.case_study_utils import (
     classify_events_probabilistic,
     compute_date_metrics,
     add_composite_scores,
+    aggregate_subdaily_to_daily,
 )
 
 
@@ -203,6 +204,10 @@ def process_parquet(parquet_path: Path, config: dict, mode: str,
     if df_full.empty:
         print(f"    (empty after filtering)")
         return pd.DataFrame()
+
+    # Collapse sub-daily steps to the daily statistic (max for mx2t) so
+    # classification matches the scorecard rather than scoring each 6-hourly step.
+    df_full = aggregate_subdaily_to_daily(df_full, config)
 
     dates = sorted(df_full["date"].unique())
     print(f"    {len(dates)} dates × {df_full['station_id'].nunique()} stations "

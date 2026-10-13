@@ -14,7 +14,7 @@ echo "Job ID: $SLURM_JOB_ID  |  Node: $HOSTNAME  |  Start: $(date)"
 echo "Args: $@"
 echo ""
 
-python3 -u diagnostics/diagnose_extremes.py "$@"
+python3 -u diagnostics/deterministic/diagnose_extremes.py "$@"
 
 exit_code=$?
 echo ""

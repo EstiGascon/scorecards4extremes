@@ -76,6 +76,151 @@ def _fair_crps_numpy(fcst_np, obs_np):
     return float(np.mean(term1 - term2))
 
 
+def _sample_climatology_crps(obs_np):
+    """Mean CRPS of the sample-climatology forecast against the same observations.
+
+    The climatological forecast is the empirical distribution of the pooled observations
+    {y_j}. Its mean CRPS over those observations has the closed form 0.5 * GMD, where GMD
+    is the Gini mean difference (mean |y_i - y_j| over all ordered pairs). Computed in
+    O(n log n) with the sorted-array identity, so it is cheap even for ~1e5 obs.
+    This is the standard climatological reference for CRPSS (CRPSS = 1 - CRPS_fc/CRPS_clim).
+    """
+    y = np.asarray(obs_np, dtype=float)
+    y = np.sort(y[~np.isnan(y)])
+    n = y.size
+    if n < 2:
+        return np.nan
+    k = np.arange(n)
+    gmd_full = 2.0 * np.sum((2 * k - n + 1) * y) / (n * n)  # mean |y_i - y_j| over all pairs
+    return 0.5 * gmd_full
+
+
+def _brier_reliability(p_hat, o_ev, n_bins=10):
+    """Reliability component of the Brier score (Murphy 1973 decomposition).
+
+    REL = (1/N) Σ_k n_k (p_k - ō_k)^2 over probability bins, where p_k is the mean forecast
+    probability in bin k and ō_k the observed event frequency in that bin. Lower is better
+    (0 = perfectly reliable). Range [0, 1]. A pure calibration measure — complements the
+    threshold-weighted accuracy scores, which do not isolate reliability.
+    """
+    p = np.asarray(p_hat, dtype=float)
+    o = np.asarray(o_ev, dtype=float)
+    m = ~(np.isnan(p) | np.isnan(o))
+    p, o = p[m], o[m]
+    N = p.size
+    if N == 0:
+        return np.nan
+    edges = np.linspace(0.0, 1.0, n_bins + 1)
+    idx = np.clip(np.digitize(p, edges[1:-1]), 0, n_bins - 1)
+    rel = 0.0
+    for k in range(n_bins):
+        sel = idx == k
+        nk = int(sel.sum())
+        if nk > 0:
+            rel += nk * (p[sel].mean() - o[sel].mean()) ** 2
+    return rel / N
+
+
+def calculate_twcrps_components(fcst_np, obs_np, thr, event_type):
+    """Decompose the fair threshold-weighted CRPS into hit / miss / false-alarm
+    contributions plus an accuracy/spread split.
+
+    The three category contributions sum exactly to twCRPS (the same way the
+    deterministic twMAE splits into hits/misses/FA):
+      - misses : underforecast of observed extremes (obs beyond T; ensemble
+                 probability mass falls short of the observation).
+      - hits   : residual cost at observed extremes from ensemble mass on the
+                 far side of the observation (event captured, magnitude imperfect).
+      - FA     : false alarms (obs not extreme; ensemble puts tail probability
+                 beyond the threshold).
+
+    The accuracy/spread split follows the kernel form of the fair CRPS:
+      twCRPS  = accuracy - spread
+      accuracy = mean_i (1/M) Σ_m |v(x_m) - v(y)|          (ensemble-mean placement)
+      spread   = mean_i (1/(2M(M-1))) ΣΣ |v(x_m) - v(x_m')|  (fair dispersion term)
+    with the chaining function v(u) = max(u, T) for the upper tail (min for lower).
+
+    Derivation of the category split uses the integral form
+      twCRPS_i = ∫_T^∞ [F_i(z) - 1{y_i ≤ z}]² dz
+    split at the observation y_i, with the fair correction -1/(M-1) ∫ F(1-F) dz
+    distributed over the same z-domain pieces so the sum stays exact.
+
+    Accepts a per-row (numpy array) or scalar threshold. The lower tail is handled
+    by reflecting the problem (x → -x) and reusing the upper-tail logic.
+    """
+    keys = ('twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA',
+            'twCRPS_accuracy', 'twCRPS_spread')
+    nan_result = {k: np.nan for k in keys}
+
+    fcst_np = np.asarray(fcst_np, dtype=float)
+    obs_np = np.asarray(obs_np, dtype=float)
+    if fcst_np.ndim != 2 or fcst_np.shape[0] == 0 or fcst_np.shape[1] < 2:
+        return nan_result
+
+    T = np.asarray(thr, dtype=float)
+    if T.ndim == 0:
+        T = np.full(fcst_np.shape[0], float(T))
+
+    valid = (~np.isnan(obs_np)) & (~np.isnan(T)) & (~np.isnan(fcst_np).any(axis=1))
+    if not valid.any():
+        return nan_result
+    fc = fcst_np[valid]
+    y = obs_np[valid]
+    Tv = T[valid]
+
+    # Reflect the lower tail so the upper-tail formulas apply unchanged.
+    if event_type == 'below':
+        fc = -fc
+        y = -y
+        Tv = -Tv
+
+    n, M = fc.shape
+    S = np.sort(fc, axis=1)  # ascending members, (n, M)
+
+    # Segment j (j=0..M) carries F = j/M on (S_{j-1}, S_j), with S_{-1}=-inf and
+    # the final segment capped at max(last member, y) so an obs beyond all members
+    # still contributes its full undershoot to the miss term.
+    lo = np.concatenate([np.full((n, 1), -np.inf), S], axis=1)   # (n, M+1)
+    hi = np.concatenate([S, np.empty((n, 1))], axis=1)           # (n, M+1)
+    hi[:, -1] = np.maximum(S[:, -1], y)
+    p = (np.arange(M + 1) / M)[None, :]                          # (1, M+1)
+
+    Tc = Tv[:, None]
+    yc = y[:, None]
+    a = np.maximum(lo, Tc)                       # clip integration domain to z >= T
+    b = np.maximum(hi, Tc)
+    below_len = np.clip(np.minimum(b, yc) - a, 0.0, None)   # z in [T, y)  -> F²
+    above_len = np.clip(b - np.maximum(a, yc), 0.0, None)   # z in [y, ∞)  -> (1-F)²
+
+    # Biased empirical-CDF integrand minus the fair correction (both split by domain).
+    p2 = p ** 2
+    omp2 = (1.0 - p) ** 2
+    pfree = p * (1.0 - p)
+    miss_piece = (p2 * below_len).sum(1) - (pfree * below_len).sum(1) / (M - 1)
+    far_piece = (omp2 * above_len).sum(1) - (pfree * above_len).sum(1) / (M - 1)
+
+    extreme = y >= Tv
+    misses = miss_piece                          # already ~0 when obs is not extreme
+    hits = np.where(extreme, far_piece, 0.0)
+    fa = np.where(~extreme, far_piece, 0.0)
+
+    # Accuracy / spread split from the kernel form of the fair CRPS.
+    v_fc = np.maximum(fc, Tc)
+    v_y = np.maximum(y, Tv)
+    accuracy = np.abs(v_fc - v_y[:, None]).mean(axis=1)
+    vs = np.sort(v_fc, axis=1)
+    w = 2 * np.arange(M) - M + 1
+    spread = (vs * w[None, :]).sum(axis=1) / (M * (M - 1))
+
+    return {
+        'twCRPS_hits': float(np.mean(hits)),
+        'twCRPS_misses': float(np.mean(misses)),
+        'twCRPS_FA': float(np.mean(fa)),
+        'twCRPS_accuracy': float(np.mean(accuracy)),
+        'twCRPS_spread': float(np.mean(spread)),
+    }
+
+
 def _bss_clim_freq(percentile, event_type):
     """Climatological event frequency from threshold percentile definition.
 
@@ -91,23 +236,37 @@ def _bss_clim_freq(percentile, event_type):
 
 
 # Tail quantile levels for threshold-weighted quantile scores (Taggart 2022, QJRMS).
-# For 'above' events: probe the upper tail (α ∈ {0.90, 0.95, 0.99}).
-# For 'below' events: probe the lower tail (α ∈ {0.01, 0.05, 0.10}).
+# Levels are at-or-beyond the extreme threshold itself (percentile 99 for 'above' /
+# percentile 1 for 'below') and probe DEEPER into the tail from there, rather than
+# below it — evaluating a quantile forecast at e.g. 0.90 when the event is only
+# "extreme" beyond the 99th percentile mixes in a much less extreme quantile level.
+# For 'above' events: probe the upper tail (α ∈ {0.99, 0.995, 0.999}).
+# For 'below' events: probe the lower tail (α ∈ {0.01, 0.005, 0.001}).
 # These levels are fixed; the threshold T (from config) sets WHERE the tail starts.
 _TW_QS_ALPHAS = {
-    'above': [0.90, 0.95, 0.99],
-    'below': [0.01, 0.05, 0.10],
+    'above': [0.99, 0.995, 0.999],
+    'below': [0.01, 0.005, 0.001],
 }
 
 
 def _alpha_label(alpha):
-    """Format alpha as a three-digit column label, e.g. 0.99 → 'q099', 0.01 → 'q001'."""
-    return f"q{int(round(alpha * 100)):03d}"
+    """Format alpha as a column-name suffix, e.g. 0.99 → 'q099', 0.995 → 'q0995'.
+
+    Alphas that are exact multiples of 0.01 keep the legacy 3-digit code (q090,
+    q099, q001, ...) so existing configs/results are unaffected. Finer alphas
+    (e.g. 0.995, 0.999, 0.005, 0.001) get a 4-digit code that cannot collide
+    with any 2-decimal code (different digit count).
+    """
+    per_mille = int(round(alpha * 1000))
+    if per_mille % 10 == 0:
+        return f"q{per_mille // 10:03d}"
+    return f"q{per_mille:04d}"
 
 
 def _alpha_from_label(label):
-    """Parse alpha from a label string, e.g. 'q099' → 0.99, 'q001' → 0.01."""
-    return int(label[1:]) / 100.0
+    """Parse alpha from a label string, e.g. 'q099' → 0.99, 'q0995' → 0.995."""
+    digits = label[1:]
+    return int(digits) / 100.0 if len(digits) == 3 else int(digits) / 1000.0
 
 
 def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_prefix,
@@ -203,12 +362,35 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
         if len(df_tw) >= 5:
             tw_fcst_np = df_tw[member_cols].values  # (n_extreme, n_members)
             tw_obs_np = df_tw['obs_value'].values
-            spread_tw = float(np.std(tw_fcst_np, ddof=1, axis=1).mean())
+            # Standard spread-skill ratio: sqrt(mean ensemble variance) / RMSE(ens mean).
+            # Use the RMS of the per-case variance (not the mean of per-case std) so the
+            # numerator is a proper variance aggregate matching the RMSE denominator.
+            spread_tw = float(np.sqrt(np.mean(np.var(tw_fcst_np, ddof=1, axis=1))))
             ens_mean_tw = tw_fcst_np.mean(axis=1)
             rmse_tw = float(np.sqrt(np.mean((ens_mean_tw - tw_obs_np) ** 2)))
             result['extreme_spread_skill_ratio'] = spread_tw / rmse_tw if rmse_tw > 1e-10 else np.nan
         else:
             result['extreme_spread_skill_ratio'] = np.nan
+
+    # Count-based hit / miss / false-alarm fractions — NO magnitude weighting,
+    # purely "how many cases fall in each category" (complements the
+    # magnitude-weighted twCRPS_hits/misses/FA decomposition above). The
+    # ensemble MEAN is used as the single representative forecast value
+    # (same basis as ens_mean_bias/mae/rmse) to get a binary "extreme
+    # predicted?" decision, compared against the binary observed outcome.
+    # Reported as % of the total sample (hit%+miss%+FA%+correct-negative% = 100%).
+    if ('count_hits_pct' in selected_scores or 'count_misses_pct' in selected_scores
+            or 'count_FA_pct' in selected_scores):
+        obs_np_cnt = df_clean['obs_value'].values
+        fc_mean_np = fcst.mean(dim='ensemble').values
+        obs_event = _exceeds(obs_np_cnt)
+        if event_type == 'above':
+            fc_event = (fc_mean_np >= thr_arr) if thr_arr is not None else (fc_mean_np >= float_threshold)
+        else:
+            fc_event = (fc_mean_np <= thr_arr) if thr_arr is not None else (fc_mean_np <= float_threshold)
+        result['count_hits_pct'] = float(np.mean(obs_event & fc_event)) * 100
+        result['count_misses_pct'] = float(np.mean(obs_event & ~fc_event)) * 100
+        result['count_FA_pct'] = float(np.mean(~obs_event & fc_event)) * 100
 
     # CRPS (fair method — equivalent to Quaver's fcrps)
     if 'CRPS' in selected_scores or 'fCRPS' in selected_scores:
@@ -261,6 +443,17 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
         except Exception as e:
             print(f"    twCRPS error: {e}")
             result['twCRPS'] = np.nan
+
+        # Decompose twCRPS into hit / miss / FA contributions + accuracy/spread
+        # split (diagnostic heatmaps, mirroring the deterministic twMAE breakdown).
+        try:
+            thr_vec = thr_arr if thr_arr is not None else np.full(len(obs.values), float_threshold)
+            result.update(calculate_twcrps_components(fcst.values, obs.values, thr_vec, event_type))
+        except Exception as e:
+            print(f"    twCRPS components error: {e}")
+            result.update({k: np.nan for k in (
+                'twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA',
+                'twCRPS_accuracy', 'twCRPS_spread')})
     
     # Brier score for ensemble
     # When per-station thresholds are available, exceedance probabilities and
@@ -278,11 +471,14 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
                     o_ev = (obs_np_b <= thr_arr).astype(float)
                 brier_val = float(np.mean((p_hat - o_ev) ** 2))
             else:
-                brier_val = float(brier_score_for_ensemble(
+                # event_thresholds=[float_threshold] adds a singleton "threshold"
+                # dim to the result even for a single scalar value — squeeze it
+                # before converting to a Python float (fixes fixed-threshold ensembles).
+                brier_val = float(np.asarray(brier_score_for_ensemble(
                     fcst, obs,
                     ensemble_member_dim='ensemble',
                     event_thresholds=[float_threshold],
-                ).values)
+                ).values).squeeze())
             result['Brier'] = brier_val
         except Exception as e:
             print(f"    Brier score error: {e}")
@@ -317,7 +513,7 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
                             ensemble_member_dim='ensemble',
                             event_thresholds=[float_threshold],
                         )
-                        bs_val = float(bv.values)
+                        bs_val = float(np.asarray(bv.values).squeeze())
                 result['BSS'] = float(1.0 - bs_val / bs_ref)
             else:
                 result['BSS'] = np.nan  # event never or always occurs
@@ -325,6 +521,41 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
             print(f"    BSS error: {e}")
             result['BSS'] = np.nan
     
+    # CRPS Skill Score vs the sample climatology:  CRPSS = 1 - CRPS_fc / CRPS_clim.
+    # The climatological reference is the empirical distribution of the pooled cell obs
+    # (its mean CRPS = 0.5 * Gini mean difference). 1 = perfect, 0 = no better than
+    # climatology, < 0 = worse. Uses the fair CRPS for the forecast numerator.
+    if 'CRPSS' in selected_scores:
+        try:
+            crps_fc = float(crps_for_ensemble(fcst, obs, ensemble_member_dim='ensemble', method='fair'))
+            crps_clim = _sample_climatology_crps(obs.values)
+            result['CRPSS'] = float(1.0 - crps_fc / crps_clim) if (crps_clim and crps_clim > 1e-12) else np.nan
+        except Exception as e:
+            print(f"    CRPSS error: {e}")
+            result['CRPSS'] = np.nan
+
+    # Reliability component of the Brier score for the extreme event (calibration only;
+    # lower = better, 0 = perfectly reliable). Uses the ensemble exceedance probability
+    # of crossing T and the binary observed outcome, per-station threshold when available.
+    if 'reliability' in selected_scores:
+        try:
+            fc_r = fcst.values
+            ob_r = obs.values
+            if thr_arr is not None:
+                if event_type == 'above':
+                    p_hat = (fc_r >= thr_arr[:, None]).mean(axis=1); o_ev = (ob_r >= thr_arr).astype(float)
+                else:
+                    p_hat = (fc_r <= thr_arr[:, None]).mean(axis=1); o_ev = (ob_r <= thr_arr).astype(float)
+            else:
+                if event_type == 'above':
+                    p_hat = (fc_r >= float_threshold).mean(axis=1); o_ev = (ob_r >= float_threshold).astype(float)
+                else:
+                    p_hat = (fc_r <= float_threshold).mean(axis=1); o_ev = (ob_r <= float_threshold).astype(float)
+            result['reliability'] = float(_brier_reliability(p_hat, o_ev))
+        except Exception as e:
+            print(f"    reliability error: {e}")
+            result['reliability'] = np.nan
+
     # Threshold-weighted Quantile Score at multiple extreme tail quantile levels.
     # Reference: Taggart (2022, QJRMS) — "Evaluation of point forecasts for extreme events
     #   using consistent scoring functions".
@@ -335,9 +566,10 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
     #   v_T(x) = max(x−T, 0) for 'above'   (upper-tail chaining function)
     #   v_T(x) = max(T−x, 0) for 'below'   (lower-tail chaining function)
     #
-    # α levels: [0.90, 0.95, 0.99] for 'above', [0.01, 0.05, 0.10] for 'below'.
+    # α levels: [0.99, 0.995, 0.999] for 'above', [0.01, 0.005, 0.001] for 'below'
+    # (at-or-beyond the extreme threshold's own percentile, see _TW_QS_ALPHAS).
     # The threshold T (per-station or global) is the configured extreme threshold.
-    # Scores are named tw_quantile_score_q{label} (e.g. tw_quantile_score_q099).
+    # Scores are named tw_quantile_score_q{label} (e.g. tw_quantile_score_q0995).
     # A mean across levels is stored as 'tw_quantile_score' for bootstrap use.
     if 'tw_quantile_score' in selected_scores:
         # Build weight interval once (same for all α levels)
@@ -486,9 +718,9 @@ def _compute_single_score(score_name, fcst, obs, threshold, event_type, tw_qs_al
                     p_hat = (fcst_np <= threshold[:, None]).mean(axis=1)
                     o_ev = (obs_np <= threshold).astype(float)
                 return float(np.mean((p_hat - o_ev) ** 2))
-            return float(brier_score_for_ensemble(
+            return float(np.asarray(brier_score_for_ensemble(
                 fcst, obs, ensemble_member_dim='ensemble',
-                event_thresholds=[float_thr]).values)
+                event_thresholds=[float_thr]).values).squeeze())
         elif score_name == 'BSS':
             obs_np = obs.values
             p_c = float(np.mean(_exceeds(obs_np)))
@@ -501,7 +733,7 @@ def _compute_single_score(score_name, fcst, obs, threshold, event_type, tw_qs_al
             return float(1.0 - bs_val / bs_ref)
         elif score_name == 'tw_quantile_score' or score_name.startswith('tw_quantile_score_q'):
             # For the mean 'tw_quantile_score', use the most extreme α level as representative.
-            # For per-level names (tw_quantile_score_q090 etc.), parse the exact α.
+            # For per-level names (tw_quantile_score_q0995 etc.), parse the exact α.
             if score_name == 'tw_quantile_score':
                 alpha = (tw_qs_alphas or _TW_QS_ALPHAS)[event_type][-1]
             else:
@@ -521,6 +753,23 @@ def _compute_single_score(score_name, fcst, obs, threshold, event_type, tw_qs_al
             return float(tw_quantile_score(q_fcst, obs, alpha, interval_where_one=interval_where_one))
         elif score_name == 'fCRPS':
             return float(crps_for_ensemble(fcst, obs, ensemble_member_dim='ensemble', method='fair'))
+        elif score_name == 'CRPSS':
+            crps_fc = float(crps_for_ensemble(fcst, obs, ensemble_member_dim='ensemble', method='fair'))
+            crps_clim = _sample_climatology_crps(obs.values)
+            return float(1.0 - crps_fc / crps_clim) if (crps_clim and crps_clim > 1e-12) else np.nan
+        elif score_name == 'reliability':
+            fc_r = fcst.values; ob_r = obs.values
+            if isinstance(threshold, np.ndarray):
+                if event_type == 'above':
+                    p_hat = (fc_r >= threshold[:, None]).mean(axis=1); o_ev = (ob_r >= threshold).astype(float)
+                else:
+                    p_hat = (fc_r <= threshold[:, None]).mean(axis=1); o_ev = (ob_r <= threshold).astype(float)
+            else:
+                if event_type == 'above':
+                    p_hat = (fc_r >= float_thr).mean(axis=1); o_ev = (ob_r >= float_thr).astype(float)
+                else:
+                    p_hat = (fc_r <= float_thr).mean(axis=1); o_ev = (ob_r <= float_thr).astype(float)
+            return float(_brier_reliability(p_hat, o_ev))
         elif score_name == 'diagonal_score':
             return float(_compute_diagonal_score_clim(fcst, obs))
         elif score_name == 'extreme_spread_skill_ratio':
@@ -531,7 +780,7 @@ def _compute_single_score(score_name, fcst, obs, threshold, event_type, tw_qs_al
             fcst_ext = fcst_np[mask]
             if len(obs_ext) < 5:
                 return np.nan
-            spread = float(np.std(fcst_ext, ddof=1, axis=1).mean())
+            spread = float(np.sqrt(np.mean(np.var(fcst_ext, ddof=1, axis=1))))
             ens_mean = fcst_ext.mean(axis=1)
             rmse = float(np.sqrt(np.mean((ens_mean - obs_ext) ** 2)))
             return spread / rmse if rmse > 1e-10 else np.nan
@@ -640,6 +889,21 @@ def _per_case_score_diff(score_name, fc1_np, fc2_np, obs_np, thr_np, event_type,
     return None
 
 
+def _date_blocks(dates, min_dates=5):
+    """Return a list of row-index arrays, one per unique date, for block bootstrapping.
+
+    Returns None when `dates` is None or there are fewer than `min_dates` distinct dates
+    (in which case the caller falls back to iid row resampling). Resampling whole dates
+    keeps all stations for a given date together, preserving same-date spatial correlation.
+    """
+    if dates is None:
+        return None
+    uniq, inv = np.unique(dates, return_inverse=True)
+    if len(uniq) < min_dates:
+        return None
+    return [np.where(inv == k)[0] for k in range(len(uniq))]
+
+
 def bootstrap_paired_significance(df, threshold, event_type, score_name,
                                   n_bootstrap=1000, confidence=0.95, max_samples=200000,
                                   tw_qs_alphas=None):
@@ -673,6 +937,10 @@ def bootstrap_paired_significance(df, threshold, event_type, score_name,
     fc1_np = df_clean[fc1_member_cols].values
     fc2_np = df_clean[fc2_member_cols].values
     obs_np = df_clean['obs_value'].values
+    # Date-block bootstrap: resample whole forecast dates (all stations for a date kept
+    # together) to preserve same-date spatial correlation; iid row resampling would
+    # over-flag significance. Falls back to iid rows when 'date' is absent or <5 dates.
+    dates_all = df_clean['date'].values if 'date' in df_clean.columns else None
 
     # Per-row thresholds: use stored column (set by _process_single_day for local_obs_climatology)
     if '_obs_threshold' in df_clean.columns:
@@ -691,10 +959,17 @@ def bootstrap_paired_significance(df, threshold, event_type, score_name,
         d_i = d_i[valid]
         if len(d_i) < 20:
             return False, np.nan, np.nan
-        # Bootstrap the mean of d_i
+        blocks = _date_blocks(dates_all[valid] if dates_all is not None else None)
+        nb = len(blocks) if blocks is not None else 0
+        m = len(d_i)
+        # Bootstrap the mean of d_i (block over dates when available)
         boot_means = np.empty(n_bootstrap)
         for b in range(n_bootstrap):
-            boot_means[b] = d_i[np.random.randint(0, len(d_i), len(d_i))].mean()
+            if blocks is not None:
+                idx = np.concatenate([blocks[k] for k in np.random.randint(0, nb, nb)])
+            else:
+                idx = np.random.randint(0, m, m)
+            boot_means[b] = d_i[idx].mean()
         ci_low = float(np.percentile(boot_means, 100 * alpha / 2))
         ci_high = float(np.percentile(boot_means, 100 * (1 - alpha / 2)))
         is_significant = not (ci_low <= 0.0 <= ci_high)
@@ -702,9 +977,14 @@ def bootstrap_paired_significance(df, threshold, event_type, score_name,
 
     # --- Fallback: resample full data and recompute score (BSS, spread, etc.) ---
     scalar_threshold = float(np.nanmean(thr_np))
+    blocks = _date_blocks(dates_all)
+    nb = len(blocks) if blocks is not None else 0
     boot_diffs = []
     for _ in range(n_bootstrap):
-        idx = np.random.choice(n, n, replace=True)
+        if blocks is not None:
+            idx = np.concatenate([blocks[k] for k in np.random.randint(0, nb, nb)])
+        else:
+            idx = np.random.choice(n, n, replace=True)
         obs_b = xr.DataArray(obs_np[idx], dims=['sample'])
         fcst1_b = xr.DataArray(fc1_np[idx], dims=['sample', 'ensemble'])
         fcst2_b = xr.DataArray(fc2_np[idx], dims=['sample', 'ensemble'])
@@ -782,10 +1062,23 @@ def _process_single_day(day, day_data, threshold, event_type, all_scores, select
         day_scores[f'{score_name}_diff'] = v2 - v1 if not (np.isnan(v1) or np.isnan(v2)) else np.nan
 
     # Collect per-level tw_quantile_score keys produced by calculate_ensemble_scores.
-    # These keys (e.g. tw_quantile_score_q090) are not in all_scores but are returned
+    # These keys (e.g. tw_quantile_score_q0995) are not in all_scores but are returned
     # by calculate_ensemble_scores when 'tw_quantile_score' is requested.
     if 'tw_quantile_score' in all_scores:
         for _key in sorted(k for k in day_fc1 if k.startswith('tw_quantile_score_q')):
+            v1 = day_fc1.get(_key, np.nan)
+            v2 = day_fc2.get(_key, np.nan)
+            day_scores[f'{_key}_fc1'] = v1
+            day_scores[f'{_key}_fc2'] = v2
+            day_scores[f'{_key}_diff'] = (
+                v2 - v1 if not (np.isnan(v1) or np.isnan(v2)) else np.nan
+            )
+
+    # twCRPS decomposition columns (hit/miss/FA + accuracy/spread). These keys are
+    # produced by calculate_ensemble_scores alongside twCRPS but are not in all_scores.
+    if 'twCRPS' in all_scores:
+        for _key in ('twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA',
+                     'twCRPS_accuracy', 'twCRPS_spread'):
             v1 = day_fc1.get(_key, np.nan)
             v2 = day_fc2.get(_key, np.nan)
             day_scores[f'{_key}_fc1'] = v1
@@ -816,7 +1109,8 @@ def score_single_day_file(config, day, day_data, threshold, event_type, model_na
     cfg = config.get('scores', {})
     selected_scores = cfg.get('ensemble', ['CRPS', 'twCRPS', 'Brier'])
     extra_scores = ['ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_spread',
-                    'extreme_spread_skill_ratio']
+                    'extreme_spread_skill_ratio',
+                    'count_hits_pct', 'count_misses_pct', 'count_FA_pct']
     all_scores = selected_scores + extra_scores
 
     bootstrap_cfg = config.get('bootstrap', {})
@@ -905,7 +1199,8 @@ def run_step6_ensemble(config, data, threshold, event_type, model_names):
     selected_scores = cfg.get('ensemble', ['CRPS', 'twCRPS', 'Brier'])
     
     # Also compute basic ensemble mean statistics
-    extra_scores = ['ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_spread', 'extreme_spread_skill_ratio']
+    extra_scores = ['ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_spread', 'extreme_spread_skill_ratio',
+                    'count_hits_pct', 'count_misses_pct', 'count_FA_pct']
     all_scores = selected_scores + extra_scores
     
     print(f"\nComparing two ensemble forecast models:")
@@ -1031,6 +1326,16 @@ def run_step6_ensemble(config, data, threshold, event_type, model_names):
             overall_scores[col_fc2] = np.nan
             overall_scores[f'{score_name}_diff'] = np.nan
     
+    # twCRPS decomposition columns (present as per-day columns but not in all_scores).
+    for score_name in ('twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA',
+                       'twCRPS_accuracy', 'twCRPS_spread'):
+        col_fc1 = f'{score_name}_fc1'
+        col_fc2 = f'{score_name}_fc2'
+        if col_fc1 in df_days.columns:
+            overall_scores[col_fc1] = df_days[col_fc1].mean()
+            overall_scores[col_fc2] = df_days[col_fc2].mean()
+            overall_scores[f'{score_name}_diff'] = overall_scores[col_fc2] - overall_scores[col_fc1]
+
     overall_scores['n_samples'] = int(df_days['n_samples'].sum()) if 'n_samples' in df_days.columns else 0
     
     print("\n✓ Step 6 (ensemble) complete")

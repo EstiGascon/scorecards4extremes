@@ -1,0 +1,161 @@
+# ============================================================================
+# DETERMINISTIC — METHOD 2 (MARS + STVL) — tp24 heavy precip, FIXED 50mm, DJF
+# NH EXTRATROPICS variant
+# ============================================================================
+# Same family as config_tp24_method2_marsstvl_fixed30mm_j98uvsja8q_DJF2425_nhextrop.yaml
+# but using a FIXED 50mm threshold instead of 30mm (event_type "above" — very
+# heavy 24h precip). All other settings (period, season, area, orography,
+# filter, scores, bootstrap) identical.
+#
+# Reference/control model : j98u research deterministic (rd/fc/j98u)  forecast_model1
+# Evaluated model          : ja8q research deterministic (rd/fc/ja8q) forecast_model2
+# ASSUMPTION: "control experiment j98u" -> forecast_model1 (reference),
+# "ja8q" -> forecast_model2 (evaluated). Swap if this is backwards.
+#
+# Neither experiment is archived in the plain MARS (marsrd) database — both
+# confirmed available ONLY via FDB (database: fdb); see the base "europe"
+# config for the full probe log. Same forecast source, just a wider area.
+#
+# Period: 2024-12-01 to 2025-02-28, single season "DJF" (Dec-Jan-Feb).
+# Steps: 24-hourly out to day 10 (240h).
+# ============================================================================
+
+variable: "tp24"
+start_date: "2024-12-01"
+end_date: "2025-02-28"
+mode: "deterministic"
+backend: "local"
+forecast_days: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+lead_time_frequency: 24
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA — retrieve deterministic rd experiments from MARS/FDB + STVL (obs)
+# ============================================================================
+read_data:
+  forecast_model1:                       # j98u research deterministic (control/reference)
+    name: "j98u"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: rd
+      type: fc
+      expver: "j98u"
+      levtype: sfc
+      time: "00"
+      database: fdb                      # NOT in plain MARS — confirmed FDB-only
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+
+  forecast_model2:                       # ja8q research deterministic (evaluated)
+    name: "ja8q"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: rd
+      type: fc
+      expver: "ja8q"
+      levtype: sfc
+      time: "00"
+      database: fdb                      # NOT in plain MARS — confirmed FDB-only
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+
+  observation_source: "stvl"
+  stvl:
+    sources: ["synop", "hdobs"]
+    base_path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_method2_marsstvl_fixed50mm_j98uvsja8q_DJF2425_nhextrop"
+  save_format: "pandas"
+  area: "nh_extratropics"
+
+# ============================================================================
+# AUXILIARY FIELDS (unused for tp24 — see base "europe" config's grid note)
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — DJF season, orography split (identical to 30mm config)
+# ============================================================================
+filter:
+  lead_times: null
+  season: "DJF"
+  orography_type: ["low", "mid", "high"]
+  orography_ranges:
+    low:  [0, 40]
+    mid:  [40, 120]
+    high: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — FIXED 50mm (very heavy 24h precip, above)
+# ============================================================================
+threshold:
+  method: "fixed"
+  fixed:
+    value: 50.0
+    event_type: "above"
+
+# ============================================================================
+# STEP 6: SCORES (deterministic)
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 500
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_method2_marsstvl_fixed50mm_j98uvsja8q_DJF2425_nhextrop"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"

@@ -27,6 +27,23 @@ obs_clim_local/out_tmax_*
 obs_clim_local/out_tmin_*
 obs_clim_local/obsclim_*.out
 obs_clim_local/obsclim_*.err
+obs_clim_local/out_mx2t_*
+obs_clim_local/out_mn2t_*
+watch_*.out
+watch_*.err
+sync_scorecards_*.out
+sync_scorecards_*.err
+qq_plot_*.out
+qq_plot_*.err
+diag_flip_*.out
+diag_flip_*.err
+obsclim_*.out
+obsclim_*.err
+ecsbatch.log.*
+
+# ── Generated per-chunk configs (scripts/chunk_extraction.py) and diagnostic plot output ──
+configs/_chunks/
+diagnostics/**/output_*/
 
 # ── AI assistant local settings ────────────────────────────────────────────────
 .claude/

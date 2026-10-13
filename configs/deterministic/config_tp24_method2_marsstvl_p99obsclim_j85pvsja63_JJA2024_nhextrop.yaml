@@ -1,0 +1,182 @@
+# ============================================================================
+# DETERMINISTIC — METHOD 2 (MARS + STVL) — tp24 heavy precip extremes (p99), JJA 2024
+# NH EXTRATROPICS -- ja63 variant (replaces ja5i, which never overlaps j85p)
+# ============================================================================
+# Same as config_tp24_method2_marsstvl_p99obsclim_j85pvsj85g_JJA2024_nhextrop.yaml
+# but forecast_model2 is "ja63" instead of "j85g".
+#
+# Reference/control model : j85p research deterministic (rd/fc/j85p)  forecast_model1
+# Evaluated model          : ja63 research deterministic (rd/fc/ja63) forecast_model2
+#
+# BACKGROUND: ja5i (originally requested) was checked and found to be
+# archived ONLY 2024-12-01 to 2025-02-28 -- it NEVER overlaps with j85p
+# (JJA 2024 only), so no valid config could be built with ja5i. User then
+# asked to try "ja63" instead.
+#
+# ja63 lives in the plain MARS (marsrd) archive (not FDB), class=rd, type=fc,
+# stream=lwda (same gotcha as j85g/j85p: aggregate `list` footer misleadingly
+# shows "lwwv"; the real per-field stream needed for retrieve is "lwda").
+#
+# IMPORTANT -- end_date TRUNCATED to 2024-08-27 (not 2024-08-31): verified via
+# MARS `list` that ja63 data stops after 2024-08-27 (2026-09-01 probe: daily
+# counts for 08-25/26/27 all >0, 08-28 through 08-31 = 0 fields). Requesting
+# the full JJA range would just waste retrieval attempts on 4 missing dates
+# at the end. j85p's own end-of-period coverage was NOT separately verified
+# past 2024-07-01 in this probe session -- if it also lacks late-August data,
+# that's naturally handled by the per-date extraction loop.
+#
+# PERFORMANCE NOTE: j85p has extensive data on TAPE (offline) -- the sibling
+# config_..._j85pvsj85g_JJA2024_nhextrop.yaml job (31320904) was still
+# retrieving the very FIRST date (2024-06-01) after 30+ minutes elapsed.
+# Expect this job to also be slow; each date may take many minutes to stage
+# from tape. Consider running well ahead of when results are needed.
+# ============================================================================
+
+variable: "tp24"
+start_date: "2024-06-01"
+end_date: "2024-08-27"
+mode: "deterministic"
+backend: "local"
+forecast_days: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+lead_time_frequency: 24
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA — retrieve deterministic rd experiments from MARS + STVL (obs)
+# ============================================================================
+read_data:
+  forecast_model1:                       # j85p research deterministic (control/reference)
+    name: "j85p"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: rd
+      type: fc
+      stream: lwda                       # NOT the default "oper" -- see note above
+      expver: "j85p"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+
+  forecast_model2:                       # ja63 research deterministic (evaluated)
+    name: "ja63"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: rd
+      type: fc
+      stream: lwda                       # NOT the default "oper" -- see note above
+      expver: "ja63"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+
+  observation_source: "stvl"
+  stvl:
+    sources: ["synop", "hdobs"]
+    base_path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_method2_marsstvl_p99obsclim_j85pvsja63_JJA2024_nhextrop"
+  save_format: "pandas"
+  area: "nh_extratropics"
+
+# ============================================================================
+# AUXILIARY FIELDS (unused for tp24 -- lsm/orog aux fields are only read for
+# 2t lapse-rate correction; kept as inert placeholders for structural
+# consistency with the config family)
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — JJA season, orography split
+# ============================================================================
+filter:
+  lead_times: null
+  season: "JJA"
+  orography_type: ["low", "mid", "high"]
+  orography_ranges:
+    low:  [0, 40]
+    mid:  [40, 120]
+    high: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "tp"
+    percentile: 99
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+
+# ============================================================================
+# STEP 6: SCORES (deterministic)
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 500
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_method2_marsstvl_p99obsclim_j85pvsja63_JJA2024_nhextrop"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"

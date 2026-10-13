@@ -43,11 +43,11 @@ module load python3
 
 echo ""
 echo "=========================================="
-echo "Running: python3 plot_qq_extremes.py $QQ_ARGS"
+echo "Running: python3 diagnostics/qq/plot_qq_extremes.py $QQ_ARGS"
 echo "=========================================="
 echo ""
 
-python3 -u plot_qq_extremes.py $QQ_ARGS
+python3 -u diagnostics/qq/plot_qq_extremes.py $QQ_ARGS
 
 exit_code=$?
 

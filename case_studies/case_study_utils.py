@@ -60,6 +60,45 @@ def load_per_station_thresholds(config: dict, df: pd.DataFrame) -> np.ndarray:
         return np.full(len(df), fallback, dtype=np.float32)
 
 
+# ─── Daily aggregation (mirror of scorecard src/run.py::_aggregate_to_daily_mean) ─
+
+def aggregate_subdaily_to_daily(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Collapse sub-daily steps to one row per (lat, lon, date, forecast_day).
+
+    Matches how the scorecard scores mx2t/mn2t: the value columns are reduced with
+    'max' for mx2t, 'min' for mn2t and 'mean' otherwise, so classification uses the
+    daily statistic rather than each 6-hourly step. No-op when there is no 'step'
+    column or only one step per station.
+    """
+    if df.empty or "step" not in df.columns:
+        return df
+    from utils import daily_aggregation_method
+    method = daily_aggregation_method(config.get("variable"))
+
+    df = df.copy()
+    df["forecast_day"] = ((df["step"] - 1) // 24).astype(int) + 1
+    group_cols = ["lat", "lon", "date", "forecast_day"]
+
+    val_cols = [c for c in ["obs_value", "fc1_value", "fc2_value",
+                            "fc1_value_uncorrected", "fc2_value_uncorrected"]
+                if c in df.columns]
+    val_cols += [c for c in df.columns
+                 if c.startswith("fc1_member_") or c.startswith("fc2_member_")]
+    meta_cols = [c for c in df.columns
+                 if c not in val_cols and c not in group_cols and c != "step"]
+
+    agg = {c: (c, method) for c in val_cols}
+    agg["step"] = ("step", "mean")
+    for c in meta_cols:
+        agg[c] = (c, "first")
+
+    out = df.groupby(group_cols, sort=False).agg(**agg).reset_index()
+    # Canonical midpoint step so the threshold's valid-month matches the scorecard.
+    freq = int(config.get("lead_time_frequency", 6) or 6)
+    out["step"] = (out["forecast_day"] * 24 - (24 - freq) // 2).astype(int)
+    return out.reset_index(drop=True)
+
+
 def get_event_type(config: dict) -> str:
     """Return 'above' or 'below' from the config threshold section."""
     cfg = config.get("threshold", {})

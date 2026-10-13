@@ -68,10 +68,10 @@ import preprocess
 import filter
 import threshold as threshold_module
 import det_scores
-import bootstrap
 import save
 import plot
 import season_utils
+from utils import physical_variable, daily_aggregation_method
 
 # extract_points imports Metview at module level. Defer the import so that
 # skip-extraction runs don't require Metview to be available.
@@ -181,12 +181,14 @@ def print_config_summary(config):
 
 def _aggregate_to_daily_mean(data, threshold_value, model_names, config=None):
     """
-    Aggregate sub-daily forecast/obs data to daily means.
+    Aggregate sub-daily forecast/obs data to one value per forecast day.
 
     Groups by (lat, lon, date, forecast_day) where
       forecast_day = ((step - 1) // 24) + 1
 
-    This is the correct grouping because det_scores.py stratifies by forecast_day.
+    The per-day aggregation of the value/member columns depends on the variable:
+    'mean' for 2t (and precip/wind), 'max' for mx2t, 'min' for mn2t. This is the
+    correct grouping because det_scores.py stratifies by forecast_day.
     Returns (agg_df, new_threshold_series).
     """
     import pandas as pd
@@ -200,9 +202,9 @@ def _aggregate_to_daily_mean(data, threshold_value, model_names, config=None):
                 'fc1_value_uncorrected', 'fc2_value_uncorrected']
     agg_cols = [c for c in agg_cols if c in data.columns]
 
-    # Include ensemble member columns (fc1_member_*, fc2_member_*) in the mean
-    # aggregation so that daily-mean member values are used when the threshold is
-    # a daily-mean climatological percentile (local_obs_climatology).
+    # Include ensemble member columns (fc1_member_*, fc2_member_*) in the value
+    # aggregation so that daily member values are used when the threshold is
+    # a daily climatological percentile (local_obs_climatology).
     member_cols = [c for c in data.columns
                    if c.startswith('fc1_member_') or c.startswith('fc2_member_')]
     agg_cols = agg_cols + member_cols
@@ -211,7 +213,9 @@ def _aggregate_to_daily_mean(data, threshold_value, model_names, config=None):
     meta_cols = [c for c in data.columns
                  if c not in agg_cols and c not in group_cols and c != 'step']
 
-    agg_dict = {col: (col, 'mean') for col in agg_cols}
+    # Daily aggregation method: mean (2t/tp/10ff), max (mx2t) or min (mn2t).
+    value_method = daily_aggregation_method(config.get('variable')) if config else 'mean'
+    agg_dict = {col: (col, value_method) for col in agg_cols}
     agg_dict['step'] = ('step', 'mean')
     for col in meta_cols:
         agg_dict[col] = (col, 'first')
@@ -403,7 +407,11 @@ def main():
                     point_data_path = quaver_extract.run_step3_ensemble(config, paths, preprocess_settings)
                 else:
                     point_data_path = extract_points_ensemble.run_step3_ensemble(config, paths, preprocess_settings)
-                
+
+                if config.get('extraction_only'):
+                    print(f"\n✓ extraction_only=true — stopping after extraction (area={current_area})")
+                    continue
+
                 # Parse seasons and orography config (needed before skip check)
                 seasons_config = config['filter'].get('season', None)
                 seasons_to_process = season_utils.parse_seasons_config(seasons_config)
@@ -534,12 +542,19 @@ def main():
                         print("  ✓ Threshold pre-computed for all season/orography combinations")
 
                     # --- Per-variable QC parameters ---
-                    _do_2t_qc = (config.get('variable') == '2t')
+                    _do_2t_qc = (physical_variable(config.get('variable')) == '2t')
                     if _do_2t_qc:
                         _min_temp = config['filter'].get('min_valid_temperature', -60.0)
                         _max_temp = config['filter'].get('max_valid_temperature', 60.0)
-                    _do_outlier = config['filter'].get('remove_outliers', False)
-                    _outlier_std = config['filter'].get('outlier_threshold_std', 5.0)
+                    # tp24 physical cap: remove unphysical sensor errors (mirrors filter.py)
+                    _do_precip_qc = (config.get('variable') == 'tp24')
+                    if _do_precip_qc:
+                        _max_precip = config['filter'].get('max_valid_precipitation', None)
+                    # NOTE: the Gaussian mean±N·std sigma-clip outlier filter has
+                    # been REMOVED entirely. It is statistically invalid for skewed
+                    # fields (strips the genuine extreme tail we verify). The
+                    # physical caps above (2t bounds, tp24 max_valid_precipitation)
+                    # handle real sensor errors instead.
 
                     # Accumulator: (season_label, orog_type) → list of day_scores dicts
                     _day_results_accum = _defaultdict(list)
@@ -576,16 +591,12 @@ def main():
                             if len(_df) < _nb:
                                 print(f"    2t QC: {_nb:,} → {len(_df):,}")
 
-                        # Outlier filter
-                        if _do_outlier and len(_df) > 0:
-                            _obs_m = _df['obs_value'].mean()
-                            _obs_s = _df['obs_value'].std()
+                        # tp24 physical cap QC
+                        if _do_precip_qc and _max_precip is not None and len(_df) > 0:
                             _nb = len(_df)
-                            _df = _df[
-                                (_df['obs_value'] - _obs_m).abs() <= _outlier_std * _obs_s
-                            ].reset_index(drop=True)
+                            _df = _df[_df['obs_value'] <= _max_precip].reset_index(drop=True)
                             if len(_df) < _nb:
-                                print(f"    Outlier filter: {_nb:,} → {len(_df):,}")
+                                print(f"    Precip QC (max={_max_precip}mm): {_nb:,} → {len(_df):,}")
 
                         for _season in seasons_to_process:
                             _season_label, _season_months_list = season_utils.resolve_season(_season)
@@ -836,7 +847,11 @@ def main():
                     point_data_path = cams_extract.run_step3(config, paths, preprocess_settings)
                 else:
                     point_data_path = _get_extract_points().run_step3(config, paths, preprocess_settings)
-            
+
+            if config.get('extraction_only'):
+                print(f"\n✓ extraction_only=true — stopping after extraction (area={current_area})")
+                continue
+
             # ====================================================================
             # STEP 4: FILTER DATA
             # ====================================================================
@@ -1017,10 +1032,8 @@ def main():
                         else:
                             overall_scores, results = det_scores.run_step6(config, data, threshold_value, event_type, model_names)
                         
-                        # ====================================================================
-                        # STEP 7: BOOTSTRAP SIGNIFICANCE TESTING
-                        # ====================================================================
-                        bootstrap_results = bootstrap.run_step7(config, data, threshold_value, event_type)
+                        # Step 7 (bootstrap significance) runs inside the score functions:
+                        # paired date-block bootstrap in det_scores / ens_scores / quaver_backend.
                         
                         # Free data before next orog type load
                         del data

@@ -9,4 +9,4 @@ module load ecmwf-toolbox/new
 module load python3
 
 cd "$(dirname "$0")/.." 2>/dev/null || cd /path/to/scorecards4extremes
-python3 -u analysis/create_sdfor_o2560_masks.py
+python3 -u diagnostics/climatology/create_sdfor_o2560_masks.py

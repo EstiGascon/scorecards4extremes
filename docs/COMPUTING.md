@@ -27,7 +27,7 @@
 
 Interactive sessions on ECMWF HPC are limited to 8 GB. This is sufficient for:
 - Deterministic runs over ≤ 2 months
-- Diagnostics (`diagnostics/diagnose_extremes.py`, `diagnostics/plot_qq_extremes.py`)
+- Diagnostics (`diagnostics/deterministic/diagnose_extremes.py`, `diagnostics/qq/plot_qq_extremes.py`)
 
 ### Recommended (full verification period, deterministic)
 

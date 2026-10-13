@@ -19,6 +19,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import gc
 import shutil
+from utils import physical_variable as _physical_variable
 
 
 def _extract_raw_members_at_step(grib_data, step, obs_lats, obs_lons,
@@ -107,6 +108,9 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
     obs_path = Path(obs_path)
     output_path = Path(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
+
+    # mx2t/mn2t reuse 2t GRIB/obs, K->C and lapse; daily max/min is applied later.
+    pvar = _physical_variable(variable)
 
     start_dt = datetime.strptime(start_date, '%Y-%m-%d')
     end_dt = datetime.strptime(end_date, '%Y-%m-%d')
@@ -222,7 +226,7 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
                 print(f"    SKIP - missing wind components: {', '.join(missing)}")
                 current_dt += timedelta(days=1)
                 continue
-        elif variable == '2t':
+        elif pvar == '2t':
             # Temperature
             for patt in [f"2t_{fc1_name}_{date_str}.grib", f"2t_{date_str}.grib"]:
                 if (fc1_path / patt).exists():
@@ -298,7 +302,7 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
                 obs_path / f"tp_{date_str}.gpt",
                 obs_path / f"synop_{date_str}.gpt",
             ]
-        elif variable == '2t':
+        elif pvar == '2t':
             obs_patterns = [
                 obs_path / f"2t_obs_{date_str}00.geo",
                 obs_path / f"2t_{date_str}.gpt",
@@ -335,9 +339,9 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
             print(f"    Deaccumulation: {accum_hours}h periods", flush=True)
 
         # Temperature: Kelvin→Celsius conversion, lapse-rate correction
-        need_kelvin_to_celsius = (variable == '2t')
+        need_kelvin_to_celsius = (pvar == '2t')
         preprocess_cfg = config.get('preprocess', {})
-        need_lapse_rate = (variable == '2t' and preprocess_cfg.get('lapse_rate_correction', False))
+        need_lapse_rate = (pvar == '2t' and preprocess_cfg.get('lapse_rate_correction', False))
         lapse_rate = preprocess_cfg.get('lapse_rate', -0.0065)
 
         # Load height fields for lapse-rate correction (once per day)
@@ -360,7 +364,7 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
                 print(f"    Warning: Could not load {fc2_name} orography: {e}")
 
         # GRIB parameter to read
-        if variable == '2t':
+        if pvar == '2t':
             grib_param = '2t'
         elif variable == '10ff':
             grib_param = None  # handled separately for u/v
@@ -392,7 +396,7 @@ def extract_ensemble_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_
                     obs_path / f"tp_{valid_date_str}.gpt",
                     obs_path / f"synop_{valid_date_str}.gpt",
                 ]
-            elif variable == '2t':
+            elif pvar == '2t':
                 obs_valid_patterns = [
                     obs_path / f"2t_obs_{valid_date_str}{valid_hh}.geo",
                     obs_path / f"2t_{valid_date_str}.gpt",
