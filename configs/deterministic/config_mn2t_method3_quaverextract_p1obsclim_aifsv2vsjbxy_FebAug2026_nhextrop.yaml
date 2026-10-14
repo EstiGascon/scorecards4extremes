@@ -1,0 +1,149 @@
+# ============================================================================
+# DETERMINISTIC — METHOD 3 (quaver_extract) — mn2t per-station p1 (obs climatology, cold tail)
+# AIFS Single v2 (reference) vs RD experiment jbxy, 2026-02-01 -> 2026-08-31
+# ============================================================================
+#   Reference model (forecast_model1): "aifs_single_v2" = AIFS Single v2, built
+#     from two archives (switch on 2026-05-13):
+#       2026-02-01 -> 2026-05-12 : rd/oper/fc expver j0b1 (MARS marsrd; tp in m)
+#       2026-05-13 -> 2026-08-31 : ai/oper/fc expver 0001 = operational AIFS
+#                                  (MARS marsod; tp param 228228 in kg m-2)
+#   Evaluated model (forecast_model2): rd/oper/fc expver jbxy (FDB only; N320
+#     reduced Gaussian; tp in m). Covers 2026-02-01 -> 2026-08-31, 00/12 UTC,
+#     6-hourly steps to 240h.  00 UTC runs used.
+#
+# Because model 1 changes archive mid-period, extraction runs as 4 chunks in
+# configs/_chunks/<this config name>/ (chunks 0-1 use j0b1, chunks 2-3 use
+# operational AIFS, with the matching tp unit factor), merged by
+# scripts/chunk_extraction.py merge, then scored by this base config.
+# The read_data block below documents the j0b1 identity; it is NOT used for
+# extraction (skip_extraction_if_exists: true reads the merged parquet).
+#
+# Area: NH extratropics. No season split (season: null) — one pooled period; orography split only.
+# Coverage verified 2026-10-13 (fdb axes / mars list / vtb retrieve probes).
+# ============================================================================
+
+variable: mn2t
+start_date: '2026-02-01'
+end_date: '2026-08-31'
+mode: deterministic
+backend: quaver_extract
+forecast_days:
+- 1
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+- 8
+- 9
+- 10
+lead_time_frequency: 6
+skip_extraction_if_exists: true
+skip_scoring_if_exists: false
+read_data:
+  forecast_model1:
+    name: aifs_single_v2
+    source: quaver
+    unit_conversion_factor: 1.0
+    quaver:
+      class: rd
+      expver: j0b1
+      stream: oper
+      type: fc
+  forecast_model2:
+    name: jbxy
+    source: quaver
+    unit_conversion_factor: 1.0
+    quaver:
+      class: rd
+      expver: jbxy
+      stream: oper
+      type: fc
+  observation_source: quaver
+  quaver_obs:
+    sources:
+    - synop
+    - hdobs
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: true
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: null
+extract_points:
+  output_path: ./extracted_points/mn2t_method3_quaverextract_p1obsclim_aifsv2vsjbxy_FebAug2026_nhextrop
+  save_format: pandas
+  area: nh_extratropics
+  interpolation_method: nearest
+auxiliary_fields:
+  model1:
+    lsm_path: /ec/vol/destine/continuous_evaluation/aifs_lsm.grib
+    orog_path: /ec/vol/destine/continuous_evaluation/aifs_orog.grib
+  model2:
+    lsm_path: /ec/vol/destine/continuous_evaluation/aifs_lsm.grib
+    orog_path: /ec/vol/destine/continuous_evaluation/aifs_orog.grib
+  sdfor_path: /ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib
+filter:
+  lead_times: null
+  season: null
+  orography_type:
+  - flat
+  - hilly
+  - complex
+  orography_ranges:
+    flat:
+    - 0
+    - 40
+    hilly:
+    - 40
+    - 120
+    complex:
+    - 120
+    - 3000
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  min_valid_temperature: -60.0
+  max_valid_temperature: 60.0
+threshold:
+  method: local_obs_climatology
+  event_type: below
+  local_obs_climatology:
+    path: ./obs_clim_local
+    parameter: mn2t
+    percentile: 1
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+scores:
+  deterministic:
+  - ETS
+  - PSS
+  - SEDI
+  - EDI
+  - POD
+  - FAR
+  - twMAE
+  - twMAE_hit_mae
+  - twMAE_miss_severity
+  - twMAE_fa_severity
+  - twRMSE
+  - bias
+  - mae
+  - rmse
+  stratify_by:
+  - lead_time
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+save:
+  output_directory: ./results/mn2t_method3_quaverextract_p1obsclim_aifsv2vsjbxy_FebAug2026_nhextrop
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+plot:
+  heatmap_style: smooth
+  enabled: true
+  dpi: 300
+  format: png
