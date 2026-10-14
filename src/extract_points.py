@@ -33,6 +33,8 @@ def get_area_bbox(area_config):
         'europe': [68, -15, 27, 50],
         'nh_extratropics': [90, -180, 20, 180],
         'tropics': [20, -180, -20, 180],
+        # NH extratropics + tropics in one extraction (20S-90N); split later via filter.area
+        'nh_extratropics_tropics': [90, -180, -20, 180],
         'north_america': [72, -170, 20, -50],
         'asia': [75, 50, 10, 150]
     }

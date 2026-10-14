@@ -345,7 +345,8 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
                 'europe': [68, -15, 27, 50],
                 'france': [51.5, -5.5, 42.0, 8.5],
                 'nh_extratropics': [90, -180, 20, 180],
-                'tropics': [20, -180, -20, 180]
+                'tropics': [20, -180, -20, 180],
+                'nh_extratropics_tropics': [90, -180, -20, 180]
             }
             
             if area_name in areas:

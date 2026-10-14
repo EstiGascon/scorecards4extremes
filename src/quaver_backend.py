@@ -1529,6 +1529,7 @@ def _get_vtb_domain(area):
         'europe':           (68, -15, 27, 50),
         'nh_extratropics':  (90, -180, 20, 180),
         'tropics':          (20, -180, -20, 180),
+        'nh_extratropics_tropics': (90, -180, -20, 180),
     }
     if area in _AREAS:
         north, west, south, east = _AREAS[area]

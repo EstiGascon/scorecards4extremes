@@ -75,6 +75,14 @@ if [[ -n "${S4E_MERGE_CHUNKS:-}" ]]; then
     echo ""
 fi
 
+# Scoring-only runs over an existing extraction (see watch_and_score.sh extra
+# configs): refuse to start if the extracted day files are missing, otherwise
+# run.py would silently re-extract everything. Exits before the retry logic.
+if [[ "${S4E_REQUIRE_EXTRACTED:-0}" == "1" ]]; then
+    python -u scripts/check_extracted.py "$CONFIG" || {
+        echo "EXTRACTED DATA MISSING — not running scoring (would re-extract)"; exit 3; }
+fi
+
 echo ""
 echo "=========================================="
 echo "Running: python run.py $CONFIG"

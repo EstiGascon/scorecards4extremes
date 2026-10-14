@@ -197,6 +197,7 @@ _AREA_DISPLAY_NAMES = {
     'europe': 'Europe',
     'nh_extratropics': 'NH Extratropics',
     'tropics': 'Tropics',
+    'nh_extratropics_tropics': 'NH Extratropics + Tropics',
     'north_america': 'North America',
 }
 

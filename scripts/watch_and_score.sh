@@ -17,13 +17,20 @@
 # and the watcher waits again before merging.
 #
 # Usage:
-#   sbatch scripts/watch_and_score.sh <base_config.yaml> <n_chunks>
+#   sbatch scripts/watch_and_score.sh <base_config.yaml> <n_chunks> [extra_config.yaml ...]
+#
+# Optional extra configs are further scoring runs over the SAME merged extraction
+# (e.g. a different filter.area / orography split). Each is submitted with
+# --dependency=afterany:<merge+score job> and S4E_REQUIRE_EXTRACTED=1, so it only
+# scores and never re-extracts. If S4E_POST_SCRIPT is set (path to a batch script),
+# it is submitted after all scoring jobs finish (e.g. a combined-region plot).
 # ==============================================================================
 
 set -uo pipefail
 
 CONFIG=${1:?"Usage: sbatch watch_and_score.sh <base_config.yaml> <n_chunks>"}
 N_CHUNKS=${2:?"Usage: sbatch watch_and_score.sh <base_config.yaml> <n_chunks>"}
+EXTRA_CONFIGS=("${@:3}")
 
 REPO_ROOT="/home/moeg/scorecards4extremes"
 source "$REPO_ROOT/.venv/bin/activate"
@@ -143,7 +150,21 @@ echo "$(date): all chunks completed cleanly — submitting merge+scoring job"
 # then aborts before run.py if the merge fails. Doing the merge inline here in
 # the 1G watcher OOM-killed it, leaving no merged files, which made run.py
 # silently re-extract everything from scratch.
-sbatch --export=ALL,S4E_MERGE_CHUNKS="$N_CHUNKS" \
-    "$REPO_ROOT/scripts/submit_job_quaver.sh" "$CONFIG"
+JID=$(sbatch --parsable --export=ALL,S4E_MERGE_CHUNKS="$N_CHUNKS" \
+    "$REPO_ROOT/scripts/submit_job_quaver.sh" "$CONFIG")
+echo "Submitted batch job $JID"
+
+ALL_IDS="$JID"
+for extra in "${EXTRA_CONFIGS[@]}"; do
+    eid=$(sbatch --parsable --dependency=afterany:"$JID" \
+        --export=ALL,S4E_REQUIRE_EXTRACTED=1 \
+        "$REPO_ROOT/scripts/submit_job_quaver.sh" "$extra")
+    echo "Submitted extra scoring job $eid for $extra (after $JID)"
+    ALL_IDS="$ALL_IDS:$eid"
+done
+if [[ -n "${S4E_POST_SCRIPT:-}" ]]; then
+    pid=$(sbatch --parsable --dependency=afterany:"$ALL_IDS" "$S4E_POST_SCRIPT")
+    echo "Submitted post-processing job $pid ($S4E_POST_SCRIPT) after $ALL_IDS"
+fi
 
 echo "$(date): watcher done"
