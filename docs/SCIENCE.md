@@ -237,7 +237,11 @@ Lower is better. Range: [0, 1].
 $$\text{spread} = \sqrt{\overline{\sigma^2}}, \qquad \sigma_i^2 = \frac{1}{m-1}\sum_{k=1}^{m}(x_{ik}-\bar{x}_i)^2$$
 
 the square root of the case-averaged **unbiased** member variance (Leutbecher & Palmer 2008;
-Fortin et al. 2014). Averaging variances rather than standard deviations makes `ens_spread`
+Leutbecher 2009; Fortin et al. 2014). ECMWF's guidance (Leutbecher 2009, §2.5) quantifies the
+spread–error relationship with region- and forecast-averaged *variances* and writes the consistency
+condition as $\tfrac{M}{M-1}\,\overline{s^2_{\text{biased}}} = \tfrac{M}{M+1}\,\overline{e^2}$, noting that the
+size factors are negligible for $M \approx 50$ but *"should be accounted for"* for $M \le 20$ — as for the
+8-member ensembles verified here. Averaging variances rather than standard deviations makes `ens_spread`
 directly comparable with `ens_mean_rmse`; for a perfectly calibrated $m$-member ensemble
 $\text{RMSE} \approx \sqrt{(m+1)/m}\;\text{spread}$.
 
@@ -491,6 +495,8 @@ A result is considered **statistically significant** at the 95% level when the c
 - **Murphy, A. H.** (1973). A new vector partition of the probability score. *Journal of Applied Meteorology*, 12(4), 595–600.
 
 - **Leutbecher, M. & Palmer, T. N.** (2008). Ensemble forecasting. *Journal of Computational Physics*, 227(7), 3515–3539. https://doi.org/10.1016/j.jcp.2007.02.014
+
+- **Leutbecher, M.** (2009). Diagnosis of ensemble forecasting systems. *ECMWF Seminar on Diagnosis of Forecasting and Data Assimilation Systems*, 7–10 September 2009, 235–266. https://www.ecmwf.int/en/elibrary/78745-diagnosis-ensemble-forecasting-systems
 
 - **Fortin, V., Abaza, M., Anctil, F. & Turcotte, R.** (2014). Why should ensemble spread match the RMSE of the ensemble mean? *Journal of Hydrometeorology*, 15(4), 1708–1713. https://doi.org/10.1175/JHM-D-14-0008.1
 

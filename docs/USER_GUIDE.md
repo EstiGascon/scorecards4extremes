@@ -41,8 +41,8 @@
 
 | Mode | Use case | Key scores |
 |------|----------|------------|
-| `deterministic` | Single-valued forecast vs obs | ETS, PSS, POD, FAR, twMAE, twRMSE, bias, MAE, RMSE |
-| `ensemble` | Probabilistic ensemble forecast | twCRPS, fCRPS, Brier, BSS, twQS (multi-level), extreme_spread_skill_ratio |
+| `deterministic` | Single-valued forecast vs obs | SEDI, EDI, ETS, PSS, POD, FAR, twMAE (+ components), twRMSE, bias, MAE, RMSE, SEEPS (tp24) |
+| `ensemble` | Probabilistic ensemble forecast | twCRPS, fCRPS, CRPSS, Brier, BSS, reliability, twQS (multi-level), extreme_spread_skill_ratio, ens_spread (all finite-ensemble corrected) |
 
 ### Supported variables
 
@@ -124,6 +124,13 @@ scorecards4extremes/
 │   ├── submit_qq.sh                ← Q-Q plot SLURM wrapper
 │   ├── submit_diagnose.sh          ← diagnose_extremes.py SLURM wrapper
 │   ├── check_mx2t_availability.sh  ← MARS mx2t availability check
+│   ├── chunk_extraction.py         ← Split an extraction into date chunks / merge them back
+│   ├── watch_and_score.sh          ← Waits for chunks, merges, scores (+ extra configs, post step)
+│   ├── check_extracted.py          ← Guard: is a config's merged extraction complete?
+│   ├── plot_combined_regions.py    ← One scorecard with NH-orography + tropics columns
+│   ├── plot_ocean_twcrps_panels.py ← Multi-experiment panel per variable (--score twCRPS|Brier|…)
+│   ├── plot_ocean_ranking_summary.py ← Experiment ranking summary plots (--score …)
+│   ├── make_ocean_ens_configs.py   ← Example generator: many experiments × regions × variables
 │   └── ...                         ← Other batch/utility helpers
 │
 └── docs/                           ← This documentation folder
@@ -180,7 +187,8 @@ preprocess:
 extract_points:
   output_path: "/perm/user/extracted_points/my_experiment"
   save_format: "pandas"   # only "pandas" (parquet) currently supported
-  area: "europe"          # bounding box filter applied during extraction
+  area: "europe"          # europe | nh_extratropics | tropics | nh_extratropics_tropics | [N, W, S, E]
+                          # bounding box applied during extraction (null = no box; see filter.area)
 
 # ── Auxiliary fields (for lapse-rate correction and terrain classification) ─
 auxiliary_fields:
@@ -194,6 +202,8 @@ auxiliary_fields:
 
 # ── STEP 4: Filter data ────────────────────────────────────────────────────
 filter:
+  area: null             # optional named region selected AFTER extraction (requires
+                         # extract_points.area: null) — lets one extraction be scored per region (§8)
   lead_times: null       # null = use all; or list of hours e.g. [24, 48, 72]
   season: ["DJF", "JJA"]  # DJF | MAM | JJA | SON | ASO (Aug-Sep-Oct) | null
   orography_type: ["flat", "hilly", "complex"]
@@ -800,6 +810,23 @@ from frequency and are usually more informative for comparing two models' error 
 | Ensemble Mean RMSE | `ens_mean_rmse` | RMSE of the ensemble mean vs obs |
 | Ensemble Spread | `ens_spread` | √(mean over cases of the unbiased member variance, ÷(M−1)) — the standard spread–skill definition, directly comparable with `ens_mean_rmse` |
 
+**Fair and unbiased ensemble scores (finite-ensemble corrections).** With small ensembles (e.g. 8
+members) the plain estimators are biased, so the tool uses:
+
+- `fCRPS`, `twCRPS`: **fair** CRPS (Ferro 2014) — the pairwise term uses M(M−1); the bootstrap and the
+  hit/miss/FA and accuracy/spread decompositions use the same fair form.
+- `Brier` (and therefore `BSS`): **fair** Brier score (p̂ − o)² − p̂(1 − p̂)/(M − 1) for both fixed and
+  per-station thresholds. *(Per-station thresholds used the plain score before 2026-10-15.)*
+- `ens_spread`: √(mean over cases of the **unbiased** member variance, ÷(M−1)) — the standard
+  spread–skill definition (Leutbecher 2009, ECMWF; Fortin et al. 2014), directly comparable with
+  `ens_mean_rmse`. *(Before 2026-10-15 it was the mean of per-case standard deviations ÷M, about 6.5 %
+  low for 8 members.)* For a perfectly calibrated M-member ensemble, RMSE ≈ √((M+1)/M) · spread.
+- `extreme_spread_skill_ratio`: same spread definition / RMSE of the ensemble mean, on cases where the
+  observation reaches T (all backends, including `quaver`).
+- `twCRPS_spread`: the fair dispersion term of twCRPS (members chained at T), not a standard deviation.
+
+`reliability` remains the reliability term of the plain Brier decomposition (a calibration diagnostic).
+
 `ens_mean_bias`/`ens_mean_mae`/`ens_mean_rmse`/`ens_spread` are **always computed automatically**
 for ensemble mode — they don't need to be (and can't be) listed under `scores.ensemble`.
 
@@ -935,7 +962,35 @@ Classified by `sdfor` — the **sub-grid standard deviation of orography** (in m
 
 ### Coastal station removal
 
-Stations with `lsm < coastal_lsm_threshold` (default 0.9) are considered coastal and removed. The LSM value is interpolated from each model's own land-sea mask field to avoid model-dependency.
+Stations with `lsm < coastal_lsm_threshold` (default 0.9) are considered coastal and removed. With the
+`quaver_extract` backend a single common land-sea mask (IFS static analysis) is interpolated to the
+stations, so both models are filtered identically.
+
+> **Ensemble runs before 2026-10-15:** the streaming ensemble scoring path did not apply
+> `remove_coastal_stations` (nor `filter.area`, below) — ensemble scorecards kept coastal stations even
+> when configured to remove them. Both filters are now applied in the deterministic and the ensemble
+> path; re-score older ensemble results (no re-extraction needed) to make them consistent.
+
+### Region (`filter.area`)
+
+`extract_points.area` limits the **extraction** to a box. `filter.area` selects a region **after**
+extraction, from data extracted over a larger box — it only acts when `extract_points.area` is `null`
+(otherwise the data are already cut and the setting is ignored with a warning). This allows one
+expensive extraction to be scored for several regions:
+
+| Named area | Box [N, W, S, E] |
+|------------|------------------|
+| `europe` | 68, −15, 27, 50 |
+| `france` | 51.5, −5.5, 42, 8.5 (filter only) |
+| `nh_extratropics` | 90, −180, 20, 180 |
+| `tropics` | 20, −180, −20, 180 |
+| `nh_extratropics_tropics` | 90, −180, −20, 180 (extract once, then split) |
+
+Pattern: extract with `extract_points.area: nh_extratropics_tropics`, then score two configs that point
+at the same `output_path` with `extract_points.area: null` and `filter.area: nh_extratropics` (with an
+orography split) / `filter.area: tropics` (e.g. `orography_type: null`). `scripts/plot_combined_regions.py`
+draws both as one scorecard (§12). Note that tropical regions have far fewer stations with a usable
+20-year obs climatology, so `local_obs_climatology` thresholds rest on a thinner sample there.
 
 ### Quality control
 
@@ -1023,6 +1078,10 @@ model** from whatever `fc{1,2}_member_*` columns that model actually has, so
 e.g. a 51-member ensemble (control + 50 perturbed) can be compared directly
 against a 50-member one (perturbed only, no archived control) — nothing
 needs to be padded or truncated to match.
+
+For ensembles made only of perturbed members (e.g. an 8-member `rd` experiment with no control
+anywhere), the simplest setup is `ensemble: {n_members: 8, include_control: false}` with
+`number: "1/to/8"` for both models — no control is requested at all.
 
 When a model has no archived control member (common for research/`rd`
 experiments), configure how to handle it per model under its `mars:` (method
@@ -1284,6 +1343,35 @@ python diagnostics/stations/plot_station_diagnostics.py ./extracted_points/2t \
   --output-dir ./plots/station_diagnostics/2t_cold
 ```
 
+### `scripts/plot_combined_regions.py` — NH-orography + tropics in one scorecard
+
+```bash
+python scripts/plot_combined_regions.py <nh_config.yaml> <tropics_config.yaml> <output_dir>
+```
+
+Reads the `scores_by_leadtime` CSVs of an NH-extratropics run (orography split) and a tropics run
+(unsplit) that share one extraction (§8, *Region*), and redraws every score as one heatmap with columns
+NH FLAT | NH HILLY | NH COMPLEX | TROPICS through the normal plotting code (same colours, limits and
+significance boxes).
+
+### `scripts/plot_ocean_twcrps_panels.py` and `scripts/plot_ocean_ranking_summary.py` — multi-experiment views
+
+```bash
+python scripts/plot_ocean_twcrps_panels.py   [--score twCRPS|Brier|fCRPS|…] [output_dir]
+python scripts/plot_ocean_ranking_summary.py [--score twCRPS|Brier|…]       [output_dir]
+```
+
+Written for the ocean-coupling ensemble study (Control vs Ocean A/B, GT, T; configs from
+`scripts/make_ocean_ens_configs.py`), but the pattern generalises:
+- **Panels**: one figure per variable with the four experiment scorecards side by side
+  (NH FLAT | HILLY | COMPLEX | TROPICS × day 1–10), a fixed −30…+30 % colour bar, blue = experiment better
+  than the reference, boxed = significant. Lower-is-better scores only.
+- **Ranking summary**: (1) significantly better/worse cell counts, mean % change and mean rank per
+  experiment; (2) mean % change per variable × experiment with the better/worse counts in each cell.
+  Significance is always *vs the reference*; experiments are not tested against each other.
+
+Default output: `plots/ocean_ens_FebAug2026/`.
+
 ### Case-study tools (`case_studies/`)
 
 Two-step workflow for identifying and visualising specific dates where one model clearly outperforms the other. See [docs/CASE_STUDIES.md](CASE_STUDIES.md) for full details.
@@ -1413,11 +1501,47 @@ The pipeline supports **incremental restart** without re-doing already completed
 - **Extraction** (`skip_extraction_if_exists: false`): Per-date progress is cached in `_tmp/`. On resubmission, already-extracted dates are skipped automatically.
 - **Scoring** (`skip_scoring_if_exists: true`): If score CSVs already exist, the scoring step is skipped entirely.
 
+### Chunked extraction and automatic merge + scoring
+
+`quaver_extract` processes dates serially, so long periods are split into date chunks that run as
+parallel jobs, then merged and scored automatically:
+
+```bash
+python scripts/chunk_extraction.py split configs/.../my_config.yaml --n-chunks 4 --submit
+sbatch scripts/watch_and_score.sh configs/.../my_config.yaml 4 [extra_config.yaml ...]
+```
+
+- Chunk configs go to `configs/_chunks/<config name>/` (git-ignored), each with `extraction_only: true`
+  and its own `<output_path>_chunkN`; `job_ids.txt` lists their jobs.
+- `watch_and_score.sh` waits for the chunk jobs, resubmits incomplete chunks (they resume from their
+  per-date `_tmp` cache), then submits one 128 GB job that merges the chunks
+  (`chunk_extraction.py merge`) and scores the base config.
+- **Extra configs** (optional arguments) are further scoring runs over the *same* merged extraction —
+  e.g. a `filter.area: tropics` config next to an NH one. They are submitted with
+  `--dependency=afterany:<merge+score job>` and `S4E_REQUIRE_EXTRACTED=1`.
+- **`S4E_POST_SCRIPT=<batch script>`** (exported to the watcher) is submitted after all scoring jobs,
+  e.g. a combined-region plot.
+- **Guard:** with `S4E_REQUIRE_EXTRACTED=1`, `submit_job_quaver.sh` runs `scripts/check_extracted.py`
+  first and refuses to start (exit 3, no auto-retry) if any expected `*_day<N>.parquet` is missing —
+  otherwise `run.py` would silently re-extract from scratch.
+- **A model whose archive changes during the period** (e.g. a research expver until some date, then the
+  operational stream): write the chunk configs by hand so each chunk carries the right
+  `read_data.forecast_modelN.quaver` identity and `unit_conversion_factor` (e.g. tp in m → ×1000 vs
+  kg m⁻² → ×1), keeping the same model `name` so the chunks merge. Example:
+  `configs/deterministic/config_*_aifsv2vsjbxy_FebAug2026*.yaml`.
+
+> **Exit code 139 after "Extraction complete":** `quaver_extract` jobs often segfault while Python is
+> shutting down, *after* writing all day files. SLURM then reports FAILED and `submit_job_quaver.sh`
+> auto-resubmits; the resubmitted job finds the files and exits cleanly within a minute. Check the log
+> for "extraction complete" before treating such a job as failed.
+
 ### Specialist submission scripts
 
 | Script | Purpose | Resources |
 |--------|---------|----------|
 | `scripts/submit_job.sh` | Main pipeline (extract + score + plot) | 128 GB, 12 CPU, 48 h |
+| `scripts/submit_job_quaver.sh` | Same, with the vtb/quaver environment; honours `S4E_MERGE_CHUNKS`, `S4E_REQUIRE_EXTRACTED`, auto-retry | 128 GB, 12 CPU, 48 h |
+| `scripts/watch_and_score.sh` | Chunk watcher → merge + score (+ extra configs, `S4E_POST_SCRIPT`) | 1 GB, 1 CPU, 48 h |
 | `scripts/submit_qq.sh` | Q-Q plot tool (`diagnostics/qq/plot_qq.py`) | 64 GB, 1 CPU, 1 h |
 | `scripts/submit_diagnose.sh` | `diagnostics/deterministic/diagnose_extremes.py` (simple wrapper, passes all args through) | 32 GB, 1 CPU, 2 h |
 | `scripts/submit_diagnose_job.sh` | `diagnostics/deterministic/diagnose_extremes.py` (race-condition-safe multi-job helper) | 64 GB, 4 CPU, 4 h |

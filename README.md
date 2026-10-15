@@ -9,10 +9,12 @@ Q-Q diagnostic plots.
 
 - **Two-model comparison** — all scores express the relative improvement/degradation of model 1 vs model 2
 - **Tail-focused metrics** — threshold-weighted scores (twMAE, twRMSE, twCRPS, twQS) concentrate the evaluation on extreme cases
-- **Meteorological variables** — 2 m temperature (`2t`), 24 h precipitation (`tp24`), 10 m wind speed (`10ff`)
+- **Meteorological variables** — 2 m temperature (`2t`), daily max/min 2 m temperature (`mx2t`/`mn2t`, derived from 6-hourly `2t`), 24 h precipitation (`tp24`), 10 m wind speed (`10ff`)
 - **CAMS atmospheric composition variables** — AOD (`aod500`), PM2.5/PM10 (`pm2p5`/`pm10`), and trace gases (`go3`, `no2`, `so2`, `co`, `no`) via a dedicated raw-NetCDF extraction backend (`cams_extract.py`, auto-selected, deterministic mode only)
 - **Deterministic and ensemble** modes
-- **Bootstrap significance testing** — 95% confidence intervals on all score differences
+- **Bootstrap significance testing** — 95% confidence intervals on all score differences (paired date-block bootstrap)
+- **Finite-ensemble corrections** — fair CRPS/twCRPS/Brier and unbiased ensemble spread, so small (e.g. 8-member) and large ensembles are compared on equal terms
+- **Regions from one extraction** — extract once over a large box, then score NH extratropics, tropics, Europe… via `filter.area`; combined and multi-experiment panel plots in `scripts/`
 - **Season × terrain stratification** — results broken down by season (DJF/MAM/JJA/SON) and terrain complexity (flat/hilly/complex)
 
 ## Quick start
