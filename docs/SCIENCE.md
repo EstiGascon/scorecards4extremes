@@ -221,11 +221,25 @@ This is the score computed by the `scores` library's `crps_for_ensemble` functio
 
 For a binary extreme event $o \in \{0, 1\}$ with forecast probability $\hat{p}$:
 
-$$\text{BS} = (\hat{p} - o)^2$$
+$$\text{BS}_{\text{fair}} = (\hat{p} - o)^2 - \frac{\hat{p}(1-\hat{p})}{m-1}$$
 
-where $\hat{p} = \frac{1}{m}\sum_{k=1}^{m} \mathbf{1}(x_k > T)$ is the ensemble event frequency.
+where $\hat{p} = \frac{1}{m}\sum_{k=1}^{m} \mathbf{1}(x_k \ge T)$ is the ensemble event frequency.
+The second term is the **fair** correction (Ferro 2014): the plain score $(\hat{p}-o)^2$ carries a
+sampling penalty $p(1-p)/m$ for a finite ensemble, which the correction removes, so the expected
+score is that of the underlying probability and ensembles of different size are comparable.
+Equivalently, $\text{BS}_{\text{fair}}$ is the probability that two distinct members both disagree with
+the observation, so it is never negative. BSS is computed from the fair BS.
 
 Lower is better. Range: [0, 1].
+
+### Ensemble spread
+
+$$\text{spread} = \sqrt{\overline{\sigma^2}}, \qquad \sigma_i^2 = \frac{1}{m-1}\sum_{k=1}^{m}(x_{ik}-\bar{x}_i)^2$$
+
+the square root of the case-averaged **unbiased** member variance (Leutbecher & Palmer 2008;
+Fortin et al. 2014). Averaging variances rather than standard deviations makes `ens_spread`
+directly comparable with `ens_mean_rmse`; for a perfectly calibrated $m$-member ensemble
+$\text{RMSE} \approx \sqrt{(m+1)/m}\;\text{spread}$.
 
 ### Brier Skill Score
 
@@ -475,6 +489,10 @@ A result is considered **statistically significant** at the 95% level when the c
 - **Rodwell, M. J., Richardson, D. S., Hewson, T. D. & Haiden, T.** (2010). A new equitable score suitable for verifying precipitation in numerical weather prediction. *Quarterly Journal of the Royal Meteorological Society*, 136(650), 1344–1363. https://doi.org/10.1002/qj.656
 
 - **Murphy, A. H.** (1973). A new vector partition of the probability score. *Journal of Applied Meteorology*, 12(4), 595–600.
+
+- **Leutbecher, M. & Palmer, T. N.** (2008). Ensemble forecasting. *Journal of Computational Physics*, 227(7), 3515–3539. https://doi.org/10.1016/j.jcp.2007.02.014
+
+- **Fortin, V., Abaza, M., Anctil, F. & Turcotte, R.** (2014). Why should ensemble spread match the RMSE of the ensemble mean? *Journal of Hydrometeorology*, 15(4), 1708–1713. https://doi.org/10.1175/JHM-D-14-0008.1
 
 - **Efron, B. & Tibshirani, R. J.** (1993). *An Introduction to the Bootstrap*. Chapman and Hall.
 

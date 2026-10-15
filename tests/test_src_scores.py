@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 
@@ -263,3 +264,61 @@ def test_seeps_skipped_for_non_precip_variable(capsys):
     with pytest.raises(Exception):
         D.run_step6(cfg, None, 0.0, "above", {"fc1_name": "a", "fc2_name": "b"})
     assert "SEEPS is precipitation-only" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------- #
+# ensemble spread: standard definition sqrt(mean unbiased variance)
+# --------------------------------------------------------------------------- #
+def _ens_df(fc, obs):
+    df = pd.DataFrame({f"fc1_member_{k+1}": fc[:, k] for k in range(fc.shape[1])})
+    df["obs_value"] = obs
+    return df
+
+
+def test_ens_spread_is_sqrt_mean_unbiased_variance():
+    rng = np.random.default_rng(21)
+    n, m = 2000, 8
+    obs = rng.normal(0, 1, n)
+    fc = obs[:, None] + rng.normal(0, 1, (n, m)) * rng.uniform(0.5, 2.0, (n, 1))  # case-varying spread
+    r = E.calculate_ensemble_scores(_ens_df(fc, obs), 10.0, "above", ["ens_spread"], "fc1")
+    expected = np.sqrt(np.mean(np.var(fc, ddof=1, axis=1)))
+    assert r["ens_spread"] == pytest.approx(expected, rel=1e-9)
+    assert r["ens_spread"] > np.mean(np.std(fc, axis=1))       # old mean(std, ddof=0) was biased low
+
+
+def test_quaver_spread_skill_matches_ens_scores_definition():
+    import quaver_backend as Q
+    rng = np.random.default_rng(22)
+    n, m, T = 3000, 8, 15.0
+    obs = rng.normal(18, 2, n)
+    fc = obs[:, None] + rng.normal(0, 2.5, (n, m))
+    ext = obs >= T
+    expected = np.sqrt(np.mean(np.var(fc[ext], ddof=1, axis=1))) / np.sqrt(np.mean((fc[ext].mean(1) - obs[ext]) ** 2))
+    assert Q._compute_tw_spread_skill(fc, obs, T, "above") == pytest.approx(expected, rel=1e-9)
+
+
+# --------------------------------------------------------------------------- #
+# fair Brier score on the per-station-threshold path
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("event_type", ["above", "below"])
+def test_fair_brier_per_station_matches_library(event_type):
+    from scores.probability import brier_score_for_ensemble
+    rng = np.random.default_rng(23)
+    n, m, T = 4000, 8, 1.0
+    obs = rng.normal(0, 1, n)
+    fc = obs[:, None] * 0.7 + rng.normal(0, 0.9, (n, m))
+    f, o = _da(fc, obs)
+    thr = np.full(n, T)
+    ours = E._compute_single_score("Brier", f, o, thr, event_type)    # per-station (array) path
+    lib = float(np.asarray(brier_score_for_ensemble(f, o, ensemble_member_dim="ensemble",
+                                                     event_thresholds=[T], fair_correction=True)).squeeze())
+    assert ours == pytest.approx(lib, rel=1e-9)   # fair BS is symmetric under event complement
+
+
+def test_fair_brier_closed_form_and_non_negative():
+    m = 8
+    k = np.arange(m + 1)
+    p = k / m
+    assert np.allclose(E._fair_brier_per_case(p, np.zeros_like(p), m), k * (k - 1) / (m * (m - 1)))
+    assert np.allclose(E._fair_brier_per_case(p, np.ones_like(p), m), (m - k) * (m - k - 1) / (m * (m - 1)))
+    assert (E._fair_brier_per_case(p, np.zeros_like(p), m) >= 0).all()

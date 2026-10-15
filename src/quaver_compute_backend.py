@@ -2153,7 +2153,7 @@ def _compute_tw_scores_via_vtb(config, dates, steps):
                     ens_vals = step_data.loc[case_mask, member_cols].values
                     if len(ens_vals) > 0:
                         ens_mean = ens_vals.mean(axis=1)
-                        tw_spread = float(np.mean(ens_vals.std(axis=1, ddof=1)))
+                        tw_spread = float(np.sqrt(np.mean(ens_vals.var(axis=1, ddof=1))))
                         tw_rmse = float(np.sqrt(np.mean((ens_mean - obs_above) ** 2)))
                         if tw_rmse > 1e-10:
                             results[step][model_label]['tw_spread_error_ratio'] = tw_spread / tw_rmse

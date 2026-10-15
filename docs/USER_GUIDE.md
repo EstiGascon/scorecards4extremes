@@ -788,7 +788,7 @@ from frequency and are usually more informative for comparing two models' error 
 |-------|-----------|-------------|
 | Fair CRPS | `fCRPS` | Bias-corrected CRPS; lower = better |
 | Threshold-weighted CRPS | `twCRPS` | CRPS with chaining function focused on extremes |
-| Brier Score | `Brier` | Probability score for the binary extreme event |
+| Brier Score | `Brier` | **Fair** probability score for the binary extreme event: (p̂ − o)² − p̂(1 − p̂)/(M − 1), so ensembles of different size are comparable |
 | Brier Skill Score | `BSS` | Brier score relative to climatological baseline |
 | CRPS Skill Score | `CRPSS` | `1 − CRPS_fc / CRPS_clim`, with the sample climatology of the cell's pooled observations as reference; 1 = perfect, 0 = no better than climatology |
 | Brier reliability | `reliability` | Reliability term of the Brier-score decomposition (Murphy 1973) for P(crossing T), 10 probability bins; 0 = perfectly reliable, lower = better. A pure calibration measure |
@@ -798,7 +798,7 @@ from frequency and are usually more informative for comparing two models' error 
 | Ensemble Mean Bias | `ens_mean_bias` | Mean(ensemble mean − obs) |
 | Ensemble Mean MAE | `ens_mean_mae` | MAE of the ensemble mean vs obs |
 | Ensemble Mean RMSE | `ens_mean_rmse` | RMSE of the ensemble mean vs obs |
-| Ensemble Spread | `ens_spread` | Mean of the per-case ensemble std-dev across members |
+| Ensemble Spread | `ens_spread` | √(mean over cases of the unbiased member variance, ÷(M−1)) — the standard spread–skill definition, directly comparable with `ens_mean_rmse` |
 
 `ens_mean_bias`/`ens_mean_mae`/`ens_mean_rmse`/`ens_spread` are **always computed automatically**
 for ensemble mode — they don't need to be (and can't be) listed under `scores.ensemble`.

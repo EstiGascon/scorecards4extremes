@@ -76,6 +76,21 @@ def _fair_crps_numpy(fcst_np, obs_np):
     return float(np.mean(term1 - term2))
 
 
+def _fair_brier_per_case(p_hat, o_ev, n_members):
+    """Fair Brier score per case (Ferro 2014): (p̂ - o)² - p̂(1 - p̂) / (M - 1).
+
+    Removes the finite-ensemble sampling penalty, so the expected score is that of
+    the underlying probability (an infinite ensemble). Equivalent to the probability
+    that two distinct members both disagree with the observation; never negative.
+    Matches scores.brier_score_for_ensemble(fair_correction=True), which the
+    fixed-threshold path uses.
+    """
+    bs = (p_hat - o_ev) ** 2
+    if n_members > 1:
+        bs = bs - p_hat * (1.0 - p_hat) / (n_members - 1)
+    return bs
+
+
 def _sample_climatology_crps(obs_np):
     """Mean CRPS of the sample-climatology forecast against the same observations.
 
@@ -349,8 +364,12 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
     if 'ens_mean_rmse' in selected_scores:
         result['ens_mean_rmse'] = float(np.sqrt(((ens_mean_ext - obs_ext) ** 2).mean())) if fcst_ext is not None else np.nan
     
+    # Ensemble spread, standard definition (Leutbecher & Palmer 2008; Fortin et al. 2014):
+    # sqrt of the case-averaged UNBIASED member variance (ddof=1). Averaging variances
+    # (not standard deviations) makes it directly comparable with ens_mean_rmse.
     if 'ens_spread' in selected_scores:
-        result['ens_spread'] = float(fcst_ext.std(dim='ensemble').mean()) if fcst_ext is not None else np.nan
+        result['ens_spread'] = (float(np.sqrt(fcst_ext.var(dim='ensemble', ddof=1).mean()))
+                                if fcst_ext is not None else np.nan)
 
     # Threshold-weighted spread-skill ratio: R = σ_extreme / RMSE_extreme
     # Both numerator and denominator are restricted to cases where obs crosses
@@ -469,7 +488,7 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
                 else:
                     p_hat = (fcst_np_b <= thr_arr[:, None]).mean(axis=1)
                     o_ev = (obs_np_b <= thr_arr).astype(float)
-                brier_val = float(np.mean((p_hat - o_ev) ** 2))
+                brier_val = float(np.mean(_fair_brier_per_case(p_hat, o_ev, fcst_np_b.shape[1])))
             else:
                 # event_thresholds=[float_threshold] adds a singleton "threshold"
                 # dim to the result even for a single scalar value — squeeze it
@@ -506,7 +525,7 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
                         else:
                             p_hat = (fcst_np_bss <= thr_arr[:, None]).mean(axis=1)
                             o_ev = (obs_np_bss2 <= thr_arr).astype(float)
-                        bs_val = float(np.mean((p_hat - o_ev) ** 2))
+                        bs_val = float(np.mean(_fair_brier_per_case(p_hat, o_ev, fcst_np_bss.shape[1])))
                     else:
                         bv = brier_score_for_ensemble(
                             fcst, obs,
@@ -717,7 +736,7 @@ def _compute_single_score(score_name, fcst, obs, threshold, event_type, tw_qs_al
                 else:
                     p_hat = (fcst_np <= threshold[:, None]).mean(axis=1)
                     o_ev = (obs_np <= threshold).astype(float)
-                return float(np.mean((p_hat - o_ev) ** 2))
+                return float(np.mean(_fair_brier_per_case(p_hat, o_ev, fcst_np.shape[1])))
             return float(np.asarray(brier_score_for_ensemble(
                 fcst, obs, ensemble_member_dim='ensemble',
                 event_thresholds=[float_thr]).values).squeeze())
@@ -841,7 +860,7 @@ def _per_case_score_diff(score_name, fc1_np, fc2_np, obs_np, thr_np, event_type,
             else:
                 p_hat = (fc <= thr[:, None]).mean(axis=1)
                 o_ev = (obs <= thr).astype(float)
-            return (p_hat - o_ev) ** 2
+            return _fair_brier_per_case(p_hat, o_ev, fc.shape[1])
         return _brier_per_case(fc2_np, obs_np, thr_np) - _brier_per_case(fc1_np, obs_np, thr_np)
 
     elif score_name == 'tw_quantile_score' or score_name.startswith('tw_quantile_score_q'):
