@@ -1,14 +1,16 @@
 #!/usr/bin/env python
-"""One twCRPS panel per variable: Ocean A | Ocean B | GT | T, each vs Control.
+"""One score panel per variable (default twCRPS): Ocean A | Ocean B | GT | T, each vs Control.
 
 Each sub-scorecard has the columns NH FLAT | NH HILLY | NH COMPLEX | TROPICS
 (rows = forecast day 1-10), drawn from the scores_by_leadtime CSVs of the
 ocean-coupling ensemble runs (configs/ensemble/*vsctrl_FebAug2026_*.yaml).
 Colours, colour limit and significance boxes follow plot.create_smooth_multicolumn_heatmap:
-cell value = (twCRPS_exp - twCRPS_control) / twCRPS_control * 100, so negative
+cell value = (score_exp - score_control) / score_control * 100 (lower-is-better scores:
+twCRPS, Brier, fCRPS, twQS, ...), so negative
 (blue) means the experiment is better; a black box marks a significant difference.
 
-Usage:  python scripts/plot_ocean_twcrps_panels.py [output_dir]   (default plots/ocean_ens_FebAug2026)
+Usage:  python scripts/plot_ocean_twcrps_panels.py [--score Brier] [output_dir]
+        (default score twCRPS, default output plots/ocean_ens_FebAug2026)
 """
 import sys
 from pathlib import Path
@@ -52,19 +54,19 @@ def _csv(var, thr, model, region, orog):
     return pd.read_csv(d / name).set_index("forecast_day").reindex(DAYS)
 
 
-def _matrices(var, thr, model):
+def _matrices(var, thr, model, score=SCORE):
     pct = np.full((len(DAYS), len(COLUMNS)), np.nan)
     sig = np.zeros_like(pct, dtype=bool)
     for j, (region, orog, _) in enumerate(COLUMNS):
         df = _csv(var, thr, model, region, orog)
-        f1, f2 = df[f"{SCORE}_fc1"], df[f"{SCORE}_fc2"]
+        f1, f2 = df[f"{score}_fc1"], df[f"{score}_fc2"]
         pct[:, j] = ((f2 - f1) / f1.replace(0, np.nan) * 100).values
-        sig[:, j] = df[f"{SCORE}_is_significant"].fillna(False).astype(bool).values
+        sig[:, j] = df[f"{score}_is_significant"].fillna(False).astype(bool).values
     return pct, sig
 
 
-def draw_variable(var, thr, desc, out_dir):
-    mats = {model: _matrices(var, thr, model) for model, _ in MODELS}
+def draw_variable(var, thr, desc, out_dir, score=SCORE):
+    mats = {model: _matrices(var, thr, model, score) for model, _ in MODELS}
     limit = COLOR_LIMIT  # same symmetric scale for every variable and experiment
     cmap = LinearSegmentedColormap.from_list("smooth", PALETTE)
     fig, axes = plt.subplots(1, len(MODELS), figsize=(3.5 * len(MODELS) + 1.2, 7.4))
@@ -98,21 +100,27 @@ def draw_variable(var, thr, desc, out_dir):
 
     cax = fig.add_axes([0.93, 0.03, 0.015, 0.77])
     cbar = fig.colorbar(im, cax=cax, extend="both")
-    cbar.set_label("twCRPS difference vs Control (%)", fontsize=9)
-    fig.suptitle(f"twCRPS — {desc}\n8-member ensembles, init 00 UTC, "
+    cbar.set_label(f"{score} difference vs Control (%)", fontsize=9)
+    fig.suptitle(f"{score} — {desc}\n8-member ensembles, init 00 UTC, "
                  "2026-02-02..04-28 + 05-13..08-23 — blue: experiment better, boxed: significant (95%)",
                  fontsize=11, fontweight="bold")
-    out = out_dir / f"twCRPS_panel_{var}_{thr}_ocean_vs_control_FebAug2026.png"
+    out = out_dir / f"{score}_panel_{var}_{thr}_ocean_vs_control_FebAug2026.png"
     fig.savefig(out, dpi=200)
     plt.close(fig)
     print(f"  ✓ {out}")
 
 
 def main():
-    out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else REPO_ROOT / "plots" / "ocean_ens_FebAug2026"
+    args = sys.argv[1:]
+    score = SCORE
+    if args[:1] == ["--score"]:
+        score, args = args[1], args[2:]
+    if score not in plot._ERROR_SCORES | plot._BOUNDED_ERROR_SCORES:
+        sys.exit(f"{score}: only lower-is-better scores are supported (blue = experiment better)")
+    out_dir = Path(args[0]) if args else REPO_ROOT / "plots" / "ocean_ens_FebAug2026"
     out_dir.mkdir(parents=True, exist_ok=True)
     for var, thr, desc in VARIABLES:
-        draw_variable(var, thr, desc, out_dir)
+        draw_variable(var, thr, desc, out_dir, score)
 
 
 if __name__ == "__main__":
