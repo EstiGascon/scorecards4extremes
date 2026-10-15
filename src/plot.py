@@ -44,7 +44,7 @@ _TW_QS_LEVEL_SCORES = [
     'tw_quantile_score_q0001', 'tw_quantile_score_q0005',
     'tw_quantile_score_q0995', 'tw_quantile_score_q0999',
 ]
-_ENSEMBLE_SCORES = ['CRPS', 'twCRPS', 'twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA',
+_ENSEMBLE_SCORES = ['CRPS', 'fCRPS', 'twCRPS', 'twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA',
                     'twCRPS_accuracy', 'twCRPS_spread',
                     'count_hits_pct', 'count_misses_pct', 'count_FA_pct',
                     'Brier', 'BSS', 'CRPSS', 'reliability',
@@ -58,7 +58,7 @@ _ALL_KNOWN_SCORES = _DETERMINISTIC_SCORES + _ENSEMBLE_SCORES
 # quantities handled by _SIGNED_SCORES below (a relative-% of bias is meaningless).
 _ERROR_SCORES = {'twMAE', 'twMAE_hits', 'twMAE_misses', 'twMAE_FA',
                  'twMAE_hit_mae', 'twMAE_miss_severity', 'twMAE_fa_severity',
-                 'twRMSE', 'mae', 'rmse', 'CRPS', 'twCRPS', 'SEEPS',
+                 'twRMSE', 'mae', 'rmse', 'CRPS', 'fCRPS', 'twCRPS', 'SEEPS',
                  'twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA', 'twCRPS_accuracy',
                  'count_misses_pct', 'count_FA_pct',
                  'tw_quantile_score', 'diagonal_score',

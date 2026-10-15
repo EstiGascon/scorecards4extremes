@@ -579,6 +579,19 @@ def main():
                             _df[_col] = _df[_col].astype('float32')
                         print(f"    {len(_df):,} rows", flush=True)
 
+                        # Area (filter.area) and coastal filters — the deterministic path
+                        # applies these in filter.run_step4, which this streaming
+                        # ensemble path bypasses. filter.area only applies when the
+                        # extraction was not already limited to an area.
+                        _fcfg = config.get('filter', {}) or {}
+                        if _fcfg.get('area') and not config['extract_points'].get('area'):
+                            _df = filter.apply_area_filter(_df, _fcfg['area']).reset_index(drop=True)
+                        if _fcfg.get('remove_coastal_stations', True) and 'lsm' in _df.columns:
+                            _nb = len(_df)
+                            _df = _df[_df['lsm'] >= _fcfg.get('coastal_lsm_threshold', 0.9)].reset_index(drop=True)
+                            print(f"    Coastal filter (lsm >= {_fcfg.get('coastal_lsm_threshold', 0.9)}): "
+                                  f"{_nb:,} → {len(_df):,}")
+
                         # 2t physical bounds QC
                         if _do_2t_qc:
                             _nb = len(_df)

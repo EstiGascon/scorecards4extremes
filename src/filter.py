@@ -19,6 +19,29 @@ import season_utils
 from utils import format_threshold_string as _format_threshold_string
 from utils import physical_variable as _physical_variable
 
+# Named areas [North, West, South, East] that filter.area can select from data
+# extracted over a larger domain (extract_points.area unset or wider).
+NAMED_AREAS = {
+    'europe': [68, -15, 27, 50],
+    'france': [51.5, -5.5, 42.0, 8.5],
+    'nh_extratropics': [90, -180, 20, 180],
+    'tropics': [20, -180, -20, 180],
+    'nh_extratropics_tropics': [90, -180, -20, 180],
+}
+
+
+def apply_area_filter(data, area_name):
+    """Keep rows whose station lat/lon fall inside a NAMED_AREAS box. Unknown names pass through."""
+    if area_name not in NAMED_AREAS:
+        print(f"\n  Warning: Unknown area '{area_name}', skipping area filter")
+        return data
+    lat_north, lon_west, lat_south, lon_east = NAMED_AREAS[area_name]
+    before = len(data)
+    data = data[(data['lat'] >= lat_south) & (data['lat'] <= lat_north) &
+                (data['lon'] >= lon_west) & (data['lon'] <= lon_east)]
+    print(f"    Area filtering ({area_name}): {len(data):,} rows (removed {before - len(data):,})")
+    return data
+
 
 def load_extracted_data(variable, point_data_path, start_date, end_date, steps, fc1_name, fc2_name, save_format='pandas', config=None):
     """Load extracted point data - loads by forecast day for memory efficiency"""
@@ -340,25 +363,7 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
                 print(f"     Cannot change area after extraction. Ignoring filter setting.")
         else:
             # No area filter during extraction, apply it now
-            # Define named areas [North, West, South, East]
-            areas = {
-                'europe': [68, -15, 27, 50],
-                'france': [51.5, -5.5, 42.0, 8.5],
-                'nh_extratropics': [90, -180, 20, 180],
-                'tropics': [20, -180, -20, 180],
-                'nh_extratropics_tropics': [90, -180, -20, 180]
-            }
-            
-            if area_name in areas:
-                area_coords = areas[area_name]
-                lat_north, lon_west, lat_south, lon_east = area_coords
-                before = len(data)
-                data = data[(data['lat'] >= lat_south) & (data['lat'] <= lat_north) &
-                           (data['lon'] >= lon_west) & (data['lon'] <= lon_east)]
-                print(f"\n  Area filtering ({area_name}): {len(data)} rows (removed {before - len(data)})")
-                print(f"    Area: lat [{lat_south}, {lat_north}], lon [{lon_west}, {lon_east}]")
-            else:
-                print(f"\n  Warning: Unknown area '{area_name}', skipping area filter")
+            data = apply_area_filter(data, area_name)
     elif area_in_extraction:
         print(f"\n  ⚡ Area pre-filtered during extraction: {area_in_extraction}")
     
