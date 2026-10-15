@@ -35,6 +35,7 @@ VARIABLES = [  # (variable, threshold tag, description)
 COLUMNS = [("nhextrop", "flat", "NH\nFLAT"), ("nhextrop", "hilly", "NH\nHILLY"),
            ("nhextrop", "complex", "NH\nCOMPLEX"), ("tropics", None, "TROPICS")]
 DAYS = list(range(1, 11))
+COLOR_LIMIT = 30.0  # % — colour bar runs from -30 to +30 in every figure
 
 # Error-score palette of plot.create_smooth_multicolumn_heatmap (blue = model 2 better)
 PALETTE = ["#0044cf", "#274ed3", "#3a5ad6", "#4865da", "#546fdd", "#5f7be1",
@@ -64,10 +65,7 @@ def _matrices(var, thr, model):
 
 def draw_variable(var, thr, desc, out_dir):
     mats = {model: _matrices(var, thr, model) for model, _ in MODELS}
-    # One symmetric colour scale per figure (shared by its 4 scorecards), sized to the
-    # data so small signals (e.g. tp24, a few %) are not washed out by the default +-50%.
-    p95 = np.nanpercentile(np.abs(np.concatenate([m[0].ravel() for m in mats.values()])), 95)
-    limit = float(next((l for l in (5, 10, 15, 20, 30, 40, 50) if l >= p95), 50))
+    limit = COLOR_LIMIT  # same symmetric scale for every variable and experiment
     cmap = LinearSegmentedColormap.from_list("smooth", PALETTE)
     fig, axes = plt.subplots(1, len(MODELS), figsize=(3.5 * len(MODELS) + 1.2, 7.4))
     fig.subplots_adjust(left=0.06, right=0.91, top=0.80, bottom=0.03, wspace=0.12)
