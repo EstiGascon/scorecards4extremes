@@ -40,6 +40,12 @@ diag_flip_*.err
 obsclim_*.out
 obsclim_*.err
 ecsbatch.log.*
+combined_plot_*.out
+combined_plot_*.err
+twcrps_panels_*.out
+twcrps_panels_*.err
+ocean_summary_*.out
+ocean_summary_*.err
 
 # ── Generated per-chunk configs (scripts/chunk_extraction.py) and diagnostic plot output ──
 configs/_chunks/
