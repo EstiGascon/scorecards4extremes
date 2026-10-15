@@ -804,10 +804,12 @@ from frequency and are usually more informative for comparing two models' error 
 | Brier reliability | `reliability` | Reliability term of the Brier-score decomposition (Murphy 1973) for P(crossing T), 10 probability bins; 0 = perfectly reliable, lower = better. A pure calibration measure |
 | TW Quantile Score (mean) | `tw_quantile_score` | Mean twQS across all tail levels |
 | TW Quantile Score — level | `tw_quantile_score_q001` etc. | twQS at a specific quantile level (see below) |
-| Extreme Spread/Skill Ratio | `extreme_spread_skill_ratio` | √(mean ensemble variance) / RMSE of the ensemble mean, **always** restricted to cases where obs crosses the threshold (unconditional on the `extreme_only_basic_scores` flag below). Because it selects on the observed outcome it carries a conditioning bias: treat it as a tail-dispersion diagnostic, not a calibration score |
+| Extreme Spread/Skill Ratio | `extreme_spread_skill_ratio` | Size-corrected √((M+1)/M) · √(mean unbiased variance) / RMSE of the ensemble mean (1 = perfect for any M), **always** restricted to cases where obs crosses the threshold (unconditional on the `extreme_only_basic_scores` flag below). Because it selects on the observed outcome it carries a conditioning bias: treat it as a tail-dispersion diagnostic, not a calibration score |
 | Ensemble Mean Bias | `ens_mean_bias` | Mean(ensemble mean − obs) |
 | Ensemble Mean MAE | `ens_mean_mae` | MAE of the ensemble mean vs obs |
-| Ensemble Mean RMSE | `ens_mean_rmse` | RMSE of the ensemble mean vs obs |
+| Ensemble Mean RMSE | `ens_mean_rmse` | RMSE of the ensemble mean vs obs — the standard "skill" side of the spread–skill relationship (not size-corrected) |
+| Ensemble Mean RMSE, size-corrected | `ens_mean_rmse_fair` | √(MSE − s²/M): the ensemble-mean error expected for an infinite ensemble (Leutbecher & Palmer 2008); use it to compare ensembles of different size |
+| Spread/Skill Ratio | `spread_skill_ratio` | √((M+1)/M) · `ens_spread` / `ens_mean_rmse` on the same cases (all cases): 1 = perfect for any M, < 1 under-, > 1 over-dispersive |
 | Ensemble Spread | `ens_spread` | √(mean over cases of the unbiased member variance, ÷(M−1)) — the standard spread–skill definition, directly comparable with `ens_mean_rmse` |
 
 **Fair and unbiased ensemble scores (finite-ensemble corrections).** With small ensembles (e.g. 8
@@ -821,8 +823,13 @@ members) the plain estimators are biased, so the tool uses:
   spread–skill definition (Leutbecher 2009, ECMWF; Fortin et al. 2014), directly comparable with
   `ens_mean_rmse`. *(Before 2026-10-15 it was the mean of per-case standard deviations ÷M, about 6.5 %
   low for 8 members.)* For a perfectly calibrated M-member ensemble, RMSE ≈ √((M+1)/M) · spread.
-- `extreme_spread_skill_ratio`: same spread definition / RMSE of the ensemble mean, on cases where the
-  observation reaches T (all backends, including `quaver`).
+- `ens_mean_rmse` (the skill/accuracy side) is the plain RMSE of the ensemble mean, as in ECMWF
+  spread–error plots; its expected square is (1 + 1/M)σ², so it is inflated for small ensembles.
+  `ens_mean_rmse_fair` = √(MSE − s²/M) removes that, for comparisons across ensemble sizes.
+- `spread_skill_ratio` (all cases) and `extreme_spread_skill_ratio` (cases where the observation
+  reaches T): **size-corrected** √((M+1)/M) · spread / RMSE, so a statistically consistent ensemble
+  scores 1 for any M (all backends). *(Before 2026-10-15 the extreme ratio had no size factor, so a
+  perfect 8-member ensemble read ≈ 0.94; the general ratio is new.)*
 - `twCRPS_spread`: the fair dispersion term of twCRPS (members chained at T), not a standard deviation.
 
 `reliability` remains the reliability term of the plain Brier decomposition (a calibration diagnostic).
@@ -1045,8 +1052,11 @@ and the color convention flips between the two groups:
   is 0 is meaningless (it explodes near zero bias and flips sign when fc1 < 0), so these show the
   **reduction in |bias|**: `pct_diff = (|fc1| − |fc2|) / max(|fc1|, |fc2|) × 100`, bounded to
   ±100. **Positive = model2 has the smaller |bias|, shown blue.**
+- Spread–skill ratios (`spread_skill_ratio`, `extreme_spread_skill_ratio`), perfect = 1: shown as
+  **closeness to 1**, the same transform applied to (ratio − 1). **Positive = model2 is closer to
+  1, shown blue** — so too much spread is not rewarded.
 - "Higher-is-better" scores without a perfect value of 1 (`ens_spread`,
-  `extreme_spread_skill_ratio`, `twCRPS_spread`, `count_hits_pct`):
+  `twCRPS_spread`, `count_hits_pct`):
   `pct_diff = (fc2 − fc1) / fc1 × 100`, **positive = model2 better, shown blue.**
 - Skill scores with perfect = 1 (`ETS`, `PSS`, `SEDI`, `EDI`, `POD`, `BSS`, `CRPSS`,
   `correlation`): `pct_diff = (fc2 − fc1) / (1 − fc1) × 100` (normalised by the remaining

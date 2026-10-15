@@ -2156,7 +2156,9 @@ def _compute_tw_scores_via_vtb(config, dates, steps):
                         tw_spread = float(np.sqrt(np.mean(ens_vals.var(axis=1, ddof=1))))
                         tw_rmse = float(np.sqrt(np.mean((ens_mean - obs_above) ** 2)))
                         if tw_rmse > 1e-10:
-                            results[step][model_label]['tw_spread_error_ratio'] = tw_spread / tw_rmse
+                            m = ens_vals.shape[1]   # size-corrected: 1 = perfect for any M
+                            results[step][model_label]['tw_spread_error_ratio'] = (
+                                np.sqrt((m + 1.0) / m) * tw_spread / tw_rmse)
                         else:
                             results[step][model_label]['tw_spread_error_ratio'] = np.nan
 

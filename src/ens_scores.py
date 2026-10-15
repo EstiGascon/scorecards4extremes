@@ -76,6 +76,42 @@ def _fair_crps_numpy(fcst_np, obs_np):
     return float(np.mean(term1 - term2))
 
 
+def _spread_error_terms(fcst_np, obs_np):
+    """(mean unbiased member variance, MSE of the ensemble mean, M) over the given cases."""
+    fcst_np = np.asarray(fcst_np, dtype=float)
+    obs_np = np.asarray(obs_np, dtype=float)
+    var = float(np.nanmean(np.nanvar(fcst_np, ddof=1, axis=1)))
+    mse = float(np.nanmean((np.nanmean(fcst_np, axis=1) - obs_np) ** 2))
+    return var, mse, fcst_np.shape[1]
+
+
+def _spread_skill_ratio(fcst_np, obs_np):
+    """Size-corrected spread-skill ratio: sqrt((M+1)/M) * spread / RMSE(ens mean).
+
+    spread = sqrt(mean unbiased variance). For a statistically consistent M-member
+    ensemble E[MSE] = (1 + 1/M) sigma^2 (Leutbecher 2009, eq. 1; Fortin et al. 2014),
+    so the factor makes a perfect ensemble score 1 whatever its size.
+    < 1 under-dispersive, > 1 over-dispersive.
+    """
+    var, mse, m = _spread_error_terms(fcst_np, obs_np)
+    if not np.isfinite(mse) or mse <= 1e-20:
+        return np.nan
+    return float(np.sqrt((m + 1.0) / m) * np.sqrt(var) / np.sqrt(mse))
+
+
+def _ens_mean_rmse_fair(fcst_np, obs_np):
+    """RMSE of the ensemble mean corrected to infinite ensemble size: sqrt(MSE - s^2/M).
+
+    The finite-ensemble mean adds sigma^2/M to the expected squared error; subtracting
+    the unbiased estimate s^2/M (Leutbecher & Palmer 2008) gives the error expected from
+    the underlying distribution mean, so ensembles of different size are comparable.
+    """
+    var, mse, m = _spread_error_terms(fcst_np, obs_np)
+    if not np.isfinite(mse):
+        return np.nan
+    return float(np.sqrt(max(mse - var / m, 0.0)))
+
+
 def _fair_brier_per_case(p_hat, o_ev, n_members):
     """Fair Brier score per case (Ferro 2014): (p̂ - o)² - p̂(1 - p̂) / (M - 1).
 
@@ -371,6 +407,14 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
         result['ens_spread'] = (float(np.sqrt(fcst_ext.var(dim='ensemble', ddof=1).mean()))
                                 if fcst_ext is not None else np.nan)
 
+    # Same cases as ens_spread / ens_mean_rmse (all cases unless extreme_only_basic).
+    if 'spread_skill_ratio' in selected_scores:
+        result['spread_skill_ratio'] = (_spread_skill_ratio(fcst_ext.values, obs_ext.values)
+                                        if fcst_ext is not None else np.nan)
+    if 'ens_mean_rmse_fair' in selected_scores:
+        result['ens_mean_rmse_fair'] = (_ens_mean_rmse_fair(fcst_ext.values, obs_ext.values)
+                                        if fcst_ext is not None else np.nan)
+
     # Threshold-weighted spread-skill ratio: R = σ_extreme / RMSE_extreme
     # Both numerator and denominator are restricted to cases where obs crosses
     # the threshold, making this explicitly threshold-conditioned.
@@ -381,13 +425,8 @@ def calculate_ensemble_scores(df, threshold, event_type, selected_scores, model_
         if len(df_tw) >= 5:
             tw_fcst_np = df_tw[member_cols].values  # (n_extreme, n_members)
             tw_obs_np = df_tw['obs_value'].values
-            # Standard spread-skill ratio: sqrt(mean ensemble variance) / RMSE(ens mean).
-            # Use the RMS of the per-case variance (not the mean of per-case std) so the
-            # numerator is a proper variance aggregate matching the RMSE denominator.
-            spread_tw = float(np.sqrt(np.mean(np.var(tw_fcst_np, ddof=1, axis=1))))
-            ens_mean_tw = tw_fcst_np.mean(axis=1)
-            rmse_tw = float(np.sqrt(np.mean((ens_mean_tw - tw_obs_np) ** 2)))
-            result['extreme_spread_skill_ratio'] = spread_tw / rmse_tw if rmse_tw > 1e-10 else np.nan
+            # Size-corrected spread-skill ratio sqrt((M+1)/M)*spread/RMSE on extreme cases.
+            result['extreme_spread_skill_ratio'] = _spread_skill_ratio(tw_fcst_np, tw_obs_np)
         else:
             result['extreme_spread_skill_ratio'] = np.nan
 
@@ -799,10 +838,11 @@ def _compute_single_score(score_name, fcst, obs, threshold, event_type, tw_qs_al
             fcst_ext = fcst_np[mask]
             if len(obs_ext) < 5:
                 return np.nan
-            spread = float(np.sqrt(np.mean(np.var(fcst_ext, ddof=1, axis=1))))
-            ens_mean = fcst_ext.mean(axis=1)
-            rmse = float(np.sqrt(np.mean((ens_mean - obs_ext) ** 2)))
-            return spread / rmse if rmse > 1e-10 else np.nan
+            return _spread_skill_ratio(fcst_ext, obs_ext)
+        elif score_name == 'spread_skill_ratio':
+            return _spread_skill_ratio(fcst.values, obs.values)
+        elif score_name == 'ens_mean_rmse_fair':
+            return _ens_mean_rmse_fair(fcst.values, obs.values)
     except Exception:
         return np.nan
     return np.nan
@@ -1127,7 +1167,8 @@ def score_single_day_file(config, day, day_data, threshold, event_type, model_na
     """
     cfg = config.get('scores', {})
     selected_scores = cfg.get('ensemble', ['CRPS', 'twCRPS', 'Brier'])
-    extra_scores = ['ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_spread',
+    extra_scores = ['ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_mean_rmse_fair',
+                    'ens_spread', 'spread_skill_ratio',
                     'extreme_spread_skill_ratio',
                     'count_hits_pct', 'count_misses_pct', 'count_FA_pct']
     all_scores = selected_scores + extra_scores
@@ -1218,7 +1259,8 @@ def run_step6_ensemble(config, data, threshold, event_type, model_names):
     selected_scores = cfg.get('ensemble', ['CRPS', 'twCRPS', 'Brier'])
     
     # Also compute basic ensemble mean statistics
-    extra_scores = ['ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_spread', 'extreme_spread_skill_ratio',
+    extra_scores = ['ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_mean_rmse_fair',
+                    'ens_spread', 'spread_skill_ratio', 'extreme_spread_skill_ratio',
                     'count_hits_pct', 'count_misses_pct', 'count_FA_pct']
     all_scores = selected_scores + extra_scores
     

@@ -1376,7 +1376,8 @@ def _bootstrap_paired_significance_det(fc1, fc2, obs, threshold,
 
 
 def _compute_tw_spread_skill(members, obs, threshold, event_type):
-    """Spread-skill ratio on extreme cases: sqrt(mean unbiased variance) / RMSE(ens mean).
+    """Size-corrected spread-skill ratio on extreme cases:
+    sqrt((M+1)/M) * sqrt(mean unbiased variance) / RMSE(ens mean)  (1 = perfect for any M).
 
     Same definition as ens_scores' extreme_spread_skill_ratio (cases where the obs
     reaches the threshold, >= for 'above' / <= for 'below').
@@ -1404,7 +1405,7 @@ def _compute_tw_spread_skill(members, obs, threshold, event_type):
         return np.nan
     spread = np.sqrt(np.mean(spreads))
     rmse = np.sqrt(np.mean(errors))
-    return spread / rmse if rmse > 0 else np.nan
+    return np.sqrt((n_members + 1.0) / n_members) * spread / rmse if rmse > 0 else np.nan
 
 
 # =============================================================================

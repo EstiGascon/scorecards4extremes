@@ -49,7 +49,8 @@ _ENSEMBLE_SCORES = ['CRPS', 'fCRPS', 'twCRPS', 'twCRPS_hits', 'twCRPS_misses', '
                     'count_hits_pct', 'count_misses_pct', 'count_FA_pct',
                     'Brier', 'BSS', 'CRPSS', 'reliability',
                     'tw_quantile_score', 'diagonal_score',
-                    'ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_spread',
+                    'ens_mean_bias', 'ens_mean_mae', 'ens_mean_rmse', 'ens_mean_rmse_fair', 'ens_spread',
+                    'spread_skill_ratio',
                     'extreme_spread_skill_ratio'] + _TW_QS_LEVEL_SCORES
 _ALL_KNOWN_SCORES = _DETERMINISTIC_SCORES + _ENSEMBLE_SCORES
 
@@ -62,14 +63,13 @@ _ERROR_SCORES = {'twMAE', 'twMAE_hits', 'twMAE_misses', 'twMAE_FA',
                  'twCRPS_hits', 'twCRPS_misses', 'twCRPS_FA', 'twCRPS_accuracy',
                  'count_misses_pct', 'count_FA_pct',
                  'tw_quantile_score', 'diagonal_score',
-                 'ens_mean_mae', 'ens_mean_rmse'} | set(_TW_QS_LEVEL_SCORES)
+                 'ens_mean_mae', 'ens_mean_rmse', 'ens_mean_rmse_fair'} | set(_TW_QS_LEVEL_SCORES)
 
 # Scores where HIGHER is better but using (fc2-fc1)/fc1 formula (not skill-score denominator).
 # positive % diff = fc2 better = blue. ens_spread > 1.0 K/m·s so (1-fc1) would flip sign.
-# extreme_spread_skill_ratio: R=1 is perfect; typical NWP is under-dispersive (R<1) so higher→better.
 # twCRPS_spread: larger fair-spread term lowers twCRPS (twCRPS = accuracy - spread), so treat like ens_spread.
 # count_hits_pct: more hit cases (ensemble-mean correctly crossed T when obs did) is better.
-_HIGHER_IS_BETTER_SCORES = {'ens_spread', 'extreme_spread_skill_ratio', 'twCRPS_spread', 'count_hits_pct'}
+_HIGHER_IS_BETTER_SCORES = {'ens_spread', 'twCRPS_spread', 'count_hits_pct'}
 
 # Bounded error scores [0,1] where lower is better - use (fc1-fc2)/fc1 normalization
 # (like skill scores but with 0 as perfect instead of 1)
@@ -83,7 +83,17 @@ _BOUNDED_ERROR_SCORES = {'Brier', 'reliability', 'FAR'}
 # result is bounded to [-100, 100] with positive = model 2 less biased (better). They are
 # NOT in _ERROR_SCORES, so the colormap selection gives them the skill palette
 # (positive = blue = fc2 better), which matches this orientation.
-_SIGNED_SCORES = {'bias', 'ens_mean_bias'}
+_SIGNED_SCORES = {'bias', 'ens_mean_bias', 'spread_skill_ratio', 'extreme_spread_skill_ratio'}
+# Signed scores whose perfect value is 1 rather than 0: the size-corrected spread-skill
+# ratios (< 1 under-, > 1 over-dispersive). Compared by closeness to 1, like bias to 0.
+_TARGET_ONE_SCORES = {'spread_skill_ratio', 'extreme_spread_skill_ratio'}
+
+
+def _signed_pct(score_type, fc1, fc2):
+    """Closeness-to-target % for _SIGNED_SCORES (target 0 for bias, 1 for spread-skill ratios)."""
+    if score_type in _TARGET_ONE_SCORES:
+        return _signed_bias_pct(np.asarray(fc1, dtype=float) - 1.0, np.asarray(fc2, dtype=float) - 1.0)
+    return _signed_bias_pct(fc1, fc2)
 
 
 def _signed_bias_pct(fc1, fc2):
@@ -105,6 +115,8 @@ _SCORE_DISPLAY_NAMES = {
     'POD':                     'POD (Probability of Detection)',
     'FAR':                     'FAR (False Alarm Ratio)',
     'SEDI':                    'SEDI (Symmetric Extremal Dependence Index)',
+    'spread_skill_ratio':      'Spread/skill ratio (size-corrected, 1 = perfect)',
+    'ens_mean_rmse_fair':      'Ensemble-mean RMSE (size-corrected)',
     'EDI':                     'EDI (Extremal Dependence Index)',
     'SEEPS':                   'SEEPS (Stable Equitable Error in Probability Space)',
     'CRPSS':                   'CRPSS (CRPS skill vs climatology)',
@@ -150,7 +162,8 @@ _SCORE_COLOR_LIMITS = {
     'twMAE_FA':               50,
     'Brier':                  20,
     'ens_spread':             20,
-    'extreme_spread_skill_ratio':  50,
+    'extreme_spread_skill_ratio':  50,   # % closer to 1 (bounded to ±100)
+    'spread_skill_ratio':          50,
     'tw_quantile_score':      20,
     'tw_quantile_score_q001': 20,
     'tw_quantile_score_q005': 20,
@@ -182,7 +195,7 @@ _DEFAULT_SKILL_LIMIT = 20   # % for skill scores (ETS, BSS, PSS, …)
 def _get_color_limit(score_type):
     """Return the symmetric ±limit (%) for a given score's heatmap colorbar."""
     if (score_type in _ERROR_SCORES or score_type in _BOUNDED_ERROR_SCORES
-            or score_type in _HIGHER_IS_BETTER_SCORES):
+            or score_type in _HIGHER_IS_BETTER_SCORES or score_type in _SIGNED_SCORES):
         return _SCORE_COLOR_LIMITS.get(score_type, _DEFAULT_COLOR_LIMIT)
     return _DEFAULT_SKILL_LIMIT
 
@@ -304,7 +317,7 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
     # Calculate percentage difference based on score type
     if score_type in _SIGNED_SCORES:
         # Signed scores (bias): reduction in |bias|, bounded & sign-correct (positive=fc2 better)
-        df['pct_diff'] = _signed_bias_pct(df[fc1_col].values, df[fc2_col].values)
+        df['pct_diff'] = _signed_pct(score_type, df[fc1_col].values, df[fc2_col].values)
     elif (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
             or score_type in _HIGHER_IS_BETTER_SCORES):
         # Error metrics and spread: use relative difference (fc2-fc1)/fc1
@@ -635,7 +648,7 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
         # Calculate percentage difference based on score type
         df = results_by_leadtime.copy()
         if score_type in _SIGNED_SCORES:
-            df['pct_diff'] = _signed_bias_pct(df[fc1_col].values, df[fc2_col].values)
+            df['pct_diff'] = _signed_pct(score_type, df[fc1_col].values, df[fc2_col].values)
         elif (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
                 or score_type in _HIGHER_IS_BETTER_SCORES):
             df['pct_diff'] = ((df[fc2_col] - df[fc1_col]) / df[fc1_col].replace(0, np.nan)) * 100
@@ -928,7 +941,7 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
 
         # Percentage difference
         if score_type in _SIGNED_SCORES:
-            rlt['pct_diff'] = _signed_bias_pct(rlt[fc1_col].values, rlt[fc2_col].values)
+            rlt['pct_diff'] = _signed_pct(score_type, rlt[fc1_col].values, rlt[fc2_col].values)
         elif (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
                 or score_type in _HIGHER_IS_BETTER_SCORES):
             rlt['pct_diff'] = ((rlt[fc2_col] - rlt[fc1_col]) / rlt[fc1_col].replace(0, np.nan)) * 100
@@ -1273,7 +1286,7 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
             rlt = result_set['results']['by_leadtime'].copy()
 
             if score_type in _SIGNED_SCORES:
-                rlt['pct_diff'] = _signed_bias_pct(rlt[fc1_col].values, rlt[fc2_col].values)
+                rlt['pct_diff'] = _signed_pct(score_type, rlt[fc1_col].values, rlt[fc2_col].values)
             elif (score_type in _BOUNDED_ERROR_SCORES or score_type in _ERROR_SCORES
                     or score_type in _HIGHER_IS_BETTER_SCORES):
                 rlt['pct_diff'] = ((rlt[fc2_col] - rlt[fc1_col]) / rlt[fc1_col].replace(0, np.nan)) * 100
@@ -1314,7 +1327,8 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
         climit      = float(_get_color_limit(score_type))
         color_matrix = np.clip(combined_matrix, -climit, climit) / 100.0
         # Higher-is-better scores (spread): positive pct_diff = fc2 better = blue
-        _cpal = _skill_pal if score_type in _HIGHER_IS_BETTER_SCORES else _err_pal
+        _cpal = (_skill_pal if score_type in _HIGHER_IS_BETTER_SCORES or score_type in _SIGNED_SCORES
+                 else _err_pal)
         _cmap = LinearSegmentedColormap.from_list('panel_cmap', _cpal)
 
         im = ax.imshow(color_matrix, cmap=_cmap,

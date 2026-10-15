@@ -245,6 +245,15 @@ size factors are negligible for $M \approx 50$ but *"should be accounted for"* f
 directly comparable with `ens_mean_rmse`; for a perfectly calibrated $m$-member ensemble
 $\text{RMSE} \approx \sqrt{(m+1)/m}\;\text{spread}$.
 
+The skill side is the plain RMSE of the ensemble mean (`ens_mean_rmse`), the conventional quantity.
+Its expectation, $(1 + 1/m)\,\sigma^2$, includes the sampling error of an $m$-member mean, so a
+size-corrected version is also provided (Leutbecher & Palmer 2008):
+
+$$\text{RMSE}_{\text{fair}} = \sqrt{\overline{e^2} - \overline{s^2}/m}$$
+
+with $s^2$ the unbiased member variance; it estimates the error of the infinite-ensemble mean and is
+the right choice when ensembles of different size are compared.
+
 ### Brier Skill Score
 
 $$\text{BSS} = 1 - \frac{\overline{\text{BS}}}{\overline{\text{BS}}_{\text{clim}}}$$
@@ -275,19 +284,20 @@ the reliability diagram (`ens_calibration_*.png` from `diagnostics/ensemble/diag
 
 ### Extreme Spread/Skill Ratio
 
-A measure of ensemble dispersion restricted to extreme cases, defined as the ratio of the RMS
-ensemble spread to the RMSE of the ensemble mean:
+A measure of ensemble dispersion restricted to extreme cases, defined as the size-corrected ratio of
+the RMS ensemble spread to the RMSE of the ensemble mean:
 
-$$\text{extreme SSR} = \frac{\sqrt{\overline{\sigma^2_{\text{extreme}}}}}{\sqrt{\overline{e^2_{\text{extreme}}}}}
-= \frac{\sqrt{\overline{\sigma^2_{\text{extreme}}}}}{\text{RMSE}_{\text{extreme}}}$$
+$$\text{extreme SSR} = \sqrt{\frac{m+1}{m}}\;\frac{\sqrt{\overline{\sigma^2_{\text{extreme}}}}}{\sqrt{\overline{e^2_{\text{extreme}}}}}
+= \sqrt{\frac{m+1}{m}}\;\frac{\sqrt{\overline{\sigma^2_{\text{extreme}}}}}{\text{RMSE}_{\text{extreme}}}$$
 
 where $\sigma^2$ is the per-case ensemble variance (sample variance, `ddof=1`) and $e^2$ the squared
 error of the ensemble mean, both averaged only over cases where the observation crosses $T$.
 $\approx 1$ indicates calibrated spread; $< 1$ under-dispersion; $> 1$ over-dispersion.
 
-> **Two caveats.** (1) For a perfectly calibrated $m$-member ensemble the expected ratio is
-> $\sqrt{m/(m+1)}$, not exactly 1 (e.g. 0.990 for $m=50$); the difference is negligible here but
-> the ratio is a dispersion diagnostic, not a strictly-proper score. (2) It is conditioned on the
+> **Two caveats.** (1) The factor $\sqrt{(m+1)/m}$ (Leutbecher 2009; Fortin et al. 2014) removes the
+> finite-ensemble effect — without it a perfectly calibrated $m$-member ensemble would score
+> $\sqrt{m/(m+1)}$ (0.94 for $m=8$) — but the ratio remains a dispersion diagnostic, not a
+> strictly-proper score. The same correction defines the all-cases `spread_skill_ratio`. (2) It is conditioned on the
 > **observation** being extreme, which introduces the usual spread–skill *conditioning bias*
 > (selecting on the outcome). Treat it as a tail-dispersion diagnostic, not as a calibration score;
 > for a proper calibration assessment use the twCRPS / reliability tools.

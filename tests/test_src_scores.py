@@ -218,7 +218,8 @@ def test_extreme_spread_skill_ratio_definition():
     r = E._compute_single_score("extreme_spread_skill_ratio", f, o, T, "above")
     ext = obs >= T                      # score is conditioned on observed exceedance
     fe, oe = fc[ext], obs[ext]
-    expected = np.sqrt(np.mean(np.var(fe, ddof=1, axis=1))) / np.sqrt(np.mean((fe.mean(axis=1) - oe) ** 2))
+    expected = (np.sqrt((m + 1) / m) * np.sqrt(np.mean(np.var(fe, ddof=1, axis=1)))
+                / np.sqrt(np.mean((fe.mean(axis=1) - oe) ** 2)))
     assert r == pytest.approx(expected, rel=1e-6)
 
 
@@ -293,7 +294,8 @@ def test_quaver_spread_skill_matches_ens_scores_definition():
     obs = rng.normal(18, 2, n)
     fc = obs[:, None] + rng.normal(0, 2.5, (n, m))
     ext = obs >= T
-    expected = np.sqrt(np.mean(np.var(fc[ext], ddof=1, axis=1))) / np.sqrt(np.mean((fc[ext].mean(1) - obs[ext]) ** 2))
+    expected = (np.sqrt((m + 1) / m) * np.sqrt(np.mean(np.var(fc[ext], ddof=1, axis=1)))
+                / np.sqrt(np.mean((fc[ext].mean(1) - obs[ext]) ** 2)))
     assert Q._compute_tw_spread_skill(fc, obs, T, "above") == pytest.approx(expected, rel=1e-9)
 
 
@@ -322,3 +324,39 @@ def test_fair_brier_closed_form_and_non_negative():
     assert np.allclose(E._fair_brier_per_case(p, np.zeros_like(p), m), k * (k - 1) / (m * (m - 1)))
     assert np.allclose(E._fair_brier_per_case(p, np.ones_like(p), m), (m - k) * (m - k - 1) / (m * (m - 1)))
     assert (E._fair_brier_per_case(p, np.zeros_like(p), m) >= 0).all()
+
+
+# --------------------------------------------------------------------------- #
+# size-corrected spread-skill ratio and fair ensemble-mean RMSE
+# --------------------------------------------------------------------------- #
+def _perfect_ensemble(n, m, sigma, seed):
+    """Members and truth exchangeable: all drawn from N(mu_i, sigma^2)."""
+    rng = np.random.default_rng(seed)
+    mu = rng.normal(10, 5, n)
+    return mu[:, None] + rng.normal(0, sigma, (n, m)), mu + rng.normal(0, sigma, n)
+
+
+@pytest.mark.parametrize("m", [8, 51])
+def test_spread_skill_ratio_is_one_for_perfect_ensemble(m):
+    fc, obs = _perfect_ensemble(200_000, m, 1.5, seed=31)
+    r = E.calculate_ensemble_scores(_ens_df(fc, obs), 1e9, "above", ["spread_skill_ratio"], "fc1")
+    assert r["spread_skill_ratio"] == pytest.approx(1.0, abs=0.01)
+    raw = np.sqrt(np.mean(np.var(fc, ddof=1, axis=1))) / np.sqrt(np.mean((fc.mean(1) - obs) ** 2))
+    assert raw == pytest.approx(np.sqrt(m / (m + 1)), abs=0.01)   # uncorrected ratio sits below 1
+
+
+def test_ens_mean_rmse_fair_recovers_infinite_ensemble_error():
+    sigma, m = 1.5, 8
+    fc, obs = _perfect_ensemble(200_000, m, sigma, seed=32)
+    r = E.calculate_ensemble_scores(_ens_df(fc, obs), 1e9, "above",
+                                    ["ens_mean_rmse", "ens_mean_rmse_fair"], "fc1")
+    assert r["ens_mean_rmse"] == pytest.approx(sigma * np.sqrt(1 + 1 / m), rel=0.01)   # inflated
+    assert r["ens_mean_rmse_fair"] == pytest.approx(sigma, rel=0.01)                   # corrected
+
+
+def test_spread_skill_ratio_plotted_by_closeness_to_one():
+    assert "spread_skill_ratio" in plot._ENSEMBLE_SCORES and "ens_mean_rmse_fair" in plot._ERROR_SCORES
+    # 0.8 -> 0.9 (closer to 1) and 1.2 -> 1.1 (closer to 1) are both improvements (positive, blue)
+    up, down = plot._signed_pct("spread_skill_ratio", [0.8, 1.2], [0.9, 1.1])
+    assert up > 0 and down > 0
+    assert plot._signed_pct("extreme_spread_skill_ratio", [1.0], [1.3])[0] < 0   # moved away from 1
