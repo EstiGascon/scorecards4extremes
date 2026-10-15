@@ -9,7 +9,7 @@ cell value = (score_exp - score_control) / score_control * 100 (lower-is-better 
 twCRPS, Brier, fCRPS, twQS, ...), so negative
 (blue) means the experiment is better; a black box marks a significant difference.
 
-Usage:  python scripts/plot_ocean_twcrps_panels.py [--score Brier] [output_dir]
+Usage:  python scripts/plot_ocean_twcrps_panels.py [--score Brier|ens_mean_rmse|ens_spread|...] [output_dir]
         (default score twCRPS, default output plots/ocean_ens_FebAug2026)
 """
 import sys
@@ -61,14 +61,31 @@ def _matrices(var, thr, model, score=SCORE):
         df = _csv(var, thr, model, region, orog)
         f1, f2 = df[f"{score}_fc1"], df[f"{score}_fc2"]
         pct[:, j] = ((f2 - f1) / f1.replace(0, np.nan) * 100).values
-        sig[:, j] = df[f"{score}_is_significant"].fillna(False).astype(bool).values
+        if f"{score}_is_significant" in df:      # e.g. ens_spread / ens_mean_rmse have no test
+            sig[:, j] = df[f"{score}_is_significant"].fillna(False).astype(bool).values
     return pct, sig
+
+
+def _colour_meaning(score):
+    """(palette, legend text): blue always marks the experiment's favourable direction."""
+    if score in plot._HIGHER_IS_BETTER_SCORES:
+        if score == "ens_spread":
+            return PALETTE[::-1], "blue: experiment has MORE spread than Control"
+        return PALETTE[::-1], "blue: experiment better (higher)"
+    return PALETTE, "blue: experiment better"
+
+
+def _has_sig_column(var, thr, score):
+    region, orog, _ = COLUMNS[0]
+    return f"{score}_is_significant" in _csv(var, thr, MODELS[0][0], region, orog)
 
 
 def draw_variable(var, thr, desc, out_dir, score=SCORE):
     mats = {model: _matrices(var, thr, model, score) for model, _ in MODELS}
     limit = COLOR_LIMIT  # same symmetric scale for every variable and experiment
-    cmap = LinearSegmentedColormap.from_list("smooth", PALETTE)
+    palette, meaning = _colour_meaning(score)
+    has_sig = any(m[1].any() for m in mats.values()) or _has_sig_column(var, thr, score)
+    cmap = LinearSegmentedColormap.from_list("smooth", palette)
     fig, axes = plt.subplots(1, len(MODELS), figsize=(3.5 * len(MODELS) + 1.2, 7.4))
     fig.subplots_adjust(left=0.06, right=0.91, top=0.80, bottom=0.03, wspace=0.12)
 
@@ -101,8 +118,9 @@ def draw_variable(var, thr, desc, out_dir, score=SCORE):
     cax = fig.add_axes([0.93, 0.03, 0.015, 0.77])
     cbar = fig.colorbar(im, cax=cax, extend="both")
     cbar.set_label(f"{score} difference vs Control (%)", fontsize=9)
+    sig_text = "boxed: significant (95%)" if has_sig else "no significance test for this score"
     fig.suptitle(f"{score} — {desc}\n8-member ensembles, init 00 UTC, "
-                 "2026-02-02..04-28 + 05-13..08-23 — blue: experiment better, boxed: significant (95%)",
+                 f"2026-02-02..04-28 + 05-13..08-23 — {meaning}, {sig_text}",
                  fontsize=11, fontweight="bold")
     out = out_dir / f"{score}_panel_{var}_{thr}_ocean_vs_control_FebAug2026.png"
     fig.savefig(out, dpi=200)
@@ -115,8 +133,9 @@ def main():
     score = SCORE
     if args[:1] == ["--score"]:
         score, args = args[1], args[2:]
-    if score not in plot._ERROR_SCORES | plot._BOUNDED_ERROR_SCORES:
-        sys.exit(f"{score}: only lower-is-better scores are supported (blue = experiment better)")
+    if score not in plot._ERROR_SCORES | plot._BOUNDED_ERROR_SCORES | plot._HIGHER_IS_BETTER_SCORES:
+        sys.exit(f"{score}: only lower- or higher-is-better scores are supported "
+                 "(ratio scores with a target of 1 are not)")
     out_dir = Path(args[0]) if args else REPO_ROOT / "plots" / "ocean_ens_FebAug2026"
     out_dir.mkdir(parents=True, exist_ok=True)
     for var, thr, desc in VARIABLES:
