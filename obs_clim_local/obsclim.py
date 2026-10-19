@@ -139,12 +139,19 @@ if param == '10ff':
     obs_period = 0 # hours
     verifWindowList = [1,3,5,7,10,14,15] # days
     period = 6
+if param == 'mx10ff':
+    # Daily MAX of the 6-hourly 10ff observations, consistent with how mx10ff
+    # forecasts are scored (daily max of 6-hourly 10ff). Retrieved as STVL '10ff'.
+    pname = 'daily maximum 10-metre wind speed (from 6-hourly 10ff)'
+    obs_period = 0 # hours
+    verifWindowList = [1] # days
+    period = 6
 
 maxlength = max(verifWindowList)    
 # STVL parameter to retrieve. mx2t/mn2t are derived from 6-hourly 2t obs, so
 # they are retrieved from STVL as '2t' (there is no separate 6-hourly max/min
 # station parameter); the daily max/min is computed below from the sub-daily 2t.
-stvl_param = '2t' if param in ('mx2t', 'mn2t') else param
+stvl_param = {'mx2t': '2t', 'mn2t': '2t', 'mx10ff': '10ff'}.get(param, param)
 # list of the dates to be retrieved
 listOfListsOfDates = []
 for d in listOfDatesPerMonth(int(mm),int(fyear),int(lyear),maxlength):
@@ -228,7 +235,7 @@ for vw in verifWindowList:
             arr = arr_sum(obs_xarray,dd)
         elif (param == 'tmin') or (param == 'mn2t'):
             arr = arr_min(obs_xarray,dd)
-        elif (param == 'tmax') or (param == 'mx2t'):
+        elif (param == 'tmax') or (param == 'mx2t') or (param == 'mx10ff'):
             arr = arr_max(obs_xarray,dd)
         clim.append(arr)
 

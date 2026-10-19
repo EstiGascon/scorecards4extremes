@@ -52,6 +52,7 @@
 | `mx2t` | Daily **maximum** 2 m temperature (derived from 6-hourly `2t`) | °C — same as `2t`; warm-extreme (p99) verification |
 | `mn2t` | Daily **minimum** 2 m temperature (derived from 6-hourly `2t`) | °C — same as `2t`; cold-extreme (p1) verification |
 | `10ff` | 10 m wind speed | m/s (from U/V components) |
+| `mx10ff` | Daily **maximum** 10 m wind speed (derived from 6-hourly `10ff`) | m/s — same as `10ff`; strong-wind (p99) verification |
 | `tp24` | 24 h total precipitation | mm (after m→mm conversion and optional accumulation) |
 | `aod500`, `pm2p5`, `pm10`, `go3`, `no2`, `so2`, `co`, `no` | CAMS atmospheric composition (AOD / surface chemistry vs AERONET/AirNow) | see [§5 CAMS variables](#5-supported-variables) — different config schema (`source: "cams_netcdf"`), deterministic mode only |
 
@@ -144,7 +145,7 @@ Every experiment is defined by a single YAML file. Below is a fully-annotated te
 
 ```yaml
 # ── Basic settings ─────────────────────────────────────────────────────────
-variable: "2t"              # tp24 | 2t | mx2t | mn2t | 10ff | aod500 | pm2p5 | pm10 | go3 | no2 | so2 | co | no
+variable: "2t"              # tp24 | 2t | mx2t | mn2t | 10ff | mx10ff | aod500 | pm2p5 | pm10 | go3 | no2 | so2 | co | no
 start_date: "2025-08-01"    # inclusive, YYYY-MM-DD
 end_date:   "2026-02-28"    # inclusive, YYYY-MM-DD
 mode: "deterministic"       # deterministic | ensemble
@@ -519,6 +520,7 @@ All options live under the `plot:` block. Only these keys are read — any other
 | `dpi` | integer | `300` | Output resolution in dots-per-inch. Lower (e.g. `150`) for quick previews, higher for print. |
 | `format` | `"png"` / `"pdf"` / `"svg"` | `"png"` | Output file type. Use `pdf`/`svg` for scalable vector figures. |
 | `forecast_days` | list of ints, e.g. `[1, 3, 5]` | all scored days | Restrict the heatmap columns to these lead days. Omit to show every day that was scored. |
+| `color_limits` | mapping, e.g. `{twMAE: 20}` or `{default: 20}` | built-in per score (e.g. twMAE ±50%) | Symmetric colourbar range (±%) of the % difference heatmaps, per score name; `default` applies to every score not listed. Use a narrower range when differences are small. |
 
 #### What gets produced
 
@@ -633,6 +635,24 @@ threshold. MARS availability of the underlying 2t can be checked with
 - Observations: 10m instantaneous wind speed (m/s)
 - Typical threshold: p98 (strong winds)
 - `wind_speed_from_components: true` required in `preprocess`
+
+### Daily Max 10m Wind Speed (`mx10ff`)
+
+`mx10ff` verifies the **daily maximum** of the 6-hourly 10 m wind speed, built the
+same way as `mx2t`: it is physically `10ff` (same U/V GRIB, observations, wind QC and
+extraction, via `utils.physical_variable`), and for every forecast day the **max** of
+the sub-daily values is taken on both forecast and observations at scoring time.
+
+- Requires `lead_time_frequency: 6` (the 06/12/18/24 h samples are what is maximised).
+- Set `threshold.local_obs_climatology.parameter: "mx10ff"` so the per-station
+  percentiles come from the daily-max climatology (`clim_mx10ff_*`), not the
+  daily-mean `clim_10ff_*` files. Build them with `obs_clim_local/run_mx10ff.sh`
+  (daily max of 6-hourly STVL 10ff, 2005-2024, 65% availability).
+- An existing `10ff` extraction can be reused: extraction files are named after
+  `variable`, so link the `10ff_*_day{d}.parquet` files as `mx10ff_*_day{d}.parquet`
+  in a separate `output_path` instead of re-extracting.
+- Station ids in climatology files may be non-numeric (e.g. `_1961389`); thresholds
+  are matched to observations by latitude/longitude, so this is harmless.
 
 ### CAMS Atmospheric Composition Variables
 

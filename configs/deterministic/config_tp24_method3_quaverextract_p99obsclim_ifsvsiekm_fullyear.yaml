@@ -1,0 +1,151 @@
+# ============================================================================
+# DETERMINISTIC — METHOD 3 (quaver_extract) — tp24 heavy precip (p99), FULL YEAR
+# ============================================================================
+# IFS deterministic operational (ifs_oper, od/oper/0001) vs DestinE iekm (rd/oper/iekm),
+# both on their ORIGINAL (native) grids, retrieved via quaver/VTB (MARS + STVL obs).
+# Matched to config_tp24_method3_quaverextract_p99obsclim_ifsvsaifs_fullyear.yaml:
+# same period, threshold, season split (DJF/MAM/JJA/SON), orography split and coastal
+# removal. Forecast days 1-5 (iekm forecasts end at +120 h).
+# ============================================================================
+
+variable: "tp24"
+start_date: "2025-03-09"
+end_date: "2026-03-08"
+mode: "deterministic"
+backend: "quaver_extract"
+forecast_days: [1, 2, 3, 4, 5]
+lead_time_frequency: 24
+skip_extraction_if_exists: true
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA — MARS identity keys used by the quaver/VTB retrieval
+# ============================================================================
+read_data:
+  forecast_model1:                       # IFS deterministic operational (reference)
+    name: "ifs_oper"
+    source: "quaver"
+    unit_conversion_factor: 1000.0       # m -> mm
+    quaver:
+      class: "od"
+      expver: "0001"
+      stream: "oper"
+      type: "fc"
+
+  forecast_model2:                       # DestinE iekm (evaluated)
+    name: "iekm"
+    source: "quaver"
+    unit_conversion_factor: 1000.0       # m -> mm
+    quaver:
+      class: "rd"
+      expver: "iekm"
+      stream: "oper"
+      type: "fc"
+
+  observation_source: "quaver"
+  quaver_obs:
+    sources: ["synop", "hdobs"]
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_method3_quaverextract_p99obsclim_ifsvsiekm_fullyear"
+  save_format: "pandas"
+  area: "europe"
+  interpolation_method: "nearest"
+
+# ============================================================================
+# AUXILIARY FIELDS
+# ============================================================================
+auxiliary_fields:
+  model1:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco2559.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/destine_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — season split + orography split
+# ============================================================================
+filter:
+  lead_times: null
+  season: ["DJF", "MAM", "JJA", "SON"]
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  min_valid_precipitation: 0.0
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "tp"
+    percentile: 99
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_method3_quaverextract_p99obsclim_ifsvsiekm_fullyear"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"

@@ -190,10 +190,16 @@ _SCORE_COLOR_LIMITS = {
 }
 _DEFAULT_COLOR_LIMIT = 20   # % for error/bounded-error scores not listed above
 _DEFAULT_SKILL_LIMIT = 20   # % for skill scores (ETS, BSS, PSS, …)
+# Per-run overrides from config plot.color_limits ({score: ±%} or {'default': ±%}).
+_CONFIG_COLOR_LIMITS = {}
 
 
 def _get_color_limit(score_type):
     """Return the symmetric ±limit (%) for a given score's heatmap colorbar."""
+    if score_type in _CONFIG_COLOR_LIMITS:
+        return _CONFIG_COLOR_LIMITS[score_type]
+    if 'default' in _CONFIG_COLOR_LIMITS:
+        return _CONFIG_COLOR_LIMITS['default']
     if (score_type in _ERROR_SCORES or score_type in _BOUNDED_ERROR_SCORES
             or score_type in _HIGHER_IS_BETTER_SCORES or score_type in _SIGNED_SCORES):
         return _SCORE_COLOR_LIMITS.get(score_type, _DEFAULT_COLOR_LIMIT)
@@ -268,7 +274,7 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
         return
     
     # Units for display
-    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'mx10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     
     # Orography suffix for filename and title
@@ -437,7 +443,7 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
     ax.set_ylabel("Forecast Period", fontsize=11)
     
     # Title
-    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
+    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'mx10ff': '10m Daily Max Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
     var_display = var_display_map.get(variable, variable)
     orog_title = f" ({orog_type.upper()} terrain)" if orog_type else ""
     score_display = _SCORE_DISPLAY_NAMES.get(score_type, score_type.upper())
@@ -457,7 +463,7 @@ def create_heatmap(results_by_leadtime, variable, threshold_value, output_dir, m
 
 def plot_summary(data, results_by_leadtime, variable, threshold, output_dir, model_names, orog_type=None, config=None):
     """Create comprehensive summary plot comparing both models"""
-    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'mx10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     
     fig = plt.figure(figsize=(18, 12))
@@ -578,7 +584,7 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
             return
     
     # Units for display
-    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'mx10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     
     # Get columns
@@ -787,13 +793,13 @@ def create_multicolumn_heatmap(all_results, variable, threshold_value, output_di
     # (Already done in loop above)
     
     # Overall title
-    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
+    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'mx10ff': '10m Daily Max Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
     var_display = var_display_map.get(variable, variable)
     # If season is None, it means we're showing all seasons in columns
     season_title = f" - {season}" if _blank_if_all(season) else ""
     
     # Add threshold info to title
-    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'mx10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     threshold_info = ""
     threshold_method = config.get('threshold', {}).get('method', 'fixed') if config else 'fixed'
@@ -842,7 +848,7 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
             print(f"  ⚠ Skipping {score_type} smooth heatmap – missing diff column")
             return
 
-    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'mx10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
 
     fc1_col = f'{score_type}_fc1'
@@ -1111,11 +1117,11 @@ def create_smooth_multicolumn_heatmap(all_results, variable, threshold_value, ou
             ax.axvline(x=i - 0.5, ymin=0, ymax=1, color='white', linewidth=2, zorder=1000)
 
     # ---- Title ----
-    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
+    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'mx10ff': '10m Daily Max Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
     var_display = var_display_map.get(variable, variable)
     season_title = f" - {season}" if _blank_if_all(season) else ""
 
-    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'mx10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
     unit = units.get(variable, '')
     threshold_info = ""
     threshold_method = config.get('threshold', {}).get('method', 'fixed') if config else 'fixed'
@@ -1407,9 +1413,9 @@ def create_smooth_panel_heatmap(all_results, variable, threshold_value, output_d
                      fontsize=label_fs + 1, fontweight='bold', pad=16)
 
     # Overall title
-    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
+    var_display_map = {'2t': '2m Temperature', 'mx2t': '2m Max Temperature', 'mn2t': '2m Min Temperature', '10ff': '10m Wind Speed', 'mx10ff': '10m Daily Max Wind Speed', 'tp24': '24h Precipitation', 'aod500': 'AOD 500 nm', 'pm2p5': 'PM2.5', 'go3': 'Ozone (O3)'}
     var_display = var_display_map.get(variable, variable)
-    units_map   = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
+    units_map   = {'2t': '°C', 'mx2t': '°C', 'mn2t': '°C', '10ff': 'm/s', 'mx10ff': 'm/s', 'tp24': 'mm', 'pm2p5': 'µg/m³', 'go3': 'ppb'}
 
     threshold_info = ''
     if config:
@@ -1451,6 +1457,8 @@ def run_step9(config, data_or_results, threshold_value, output_dir, model_names,
     print("="*80)
     
     cfg = config.get('plot', {})
+    _CONFIG_COLOR_LIMITS.clear()
+    _CONFIG_COLOR_LIMITS.update({k: float(v) for k, v in (cfg.get('color_limits') or {}).items()})
     
     if not cfg.get('enabled', True):
         print("\n  Skipped (disabled in config)")

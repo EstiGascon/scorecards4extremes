@@ -35,7 +35,7 @@ def run_step2(config, paths):
         preprocess_settings['lapse_rate_correction'] = apply_correction
         preprocess_settings['lapse_rate'] = lapse_rate
     
-    elif variable == '10ff':
+    elif _physical_variable(variable) == '10ff':
         if cfg.get('wind_speed_from_components', False):
             print(f"  → Wind speed will be calculated from u/v components")
             preprocess_settings['calculate_wind_speed'] = True

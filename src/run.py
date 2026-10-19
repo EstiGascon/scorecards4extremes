@@ -213,7 +213,7 @@ def _aggregate_to_daily_mean(data, threshold_value, model_names, config=None):
     meta_cols = [c for c in data.columns
                  if c not in agg_cols and c not in group_cols and c != 'step']
 
-    # Daily aggregation method: mean (2t/tp/10ff), max (mx2t) or min (mn2t).
+    # Daily aggregation method: mean (2t/tp/10ff), max (mx2t/mx10ff) or min (mn2t).
     value_method = daily_aggregation_method(config.get('variable')) if config else 'mean'
     agg_dict = {col: (col, value_method) for col in agg_cols}
     agg_dict['step'] = ('step', 'mean')

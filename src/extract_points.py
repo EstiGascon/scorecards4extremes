@@ -243,7 +243,7 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                 else:
                     print(f"    ✗ Missing {fc2_name} GRIB")
             
-            elif variable == '10ff':
+            elif pvar == '10ff':
                 # Clear wind component locals from previous date to avoid stale data
                 fc1_u_grib = None
                 fc1_v_grib = None
@@ -353,7 +353,7 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                     if fc2_grib is not None:
                         fc2_step = mv.read(data=fc2_grib, step=step) - 273.15  # Convert to Celsius
                 
-                elif variable == '10ff':
+                elif pvar == '10ff':
                     # Use pre-loaded wind component GRIBs
                     if fc1_u_grib is not None and fc1_v_grib is not None:
                         u1_step = mv.read(data=fc1_u_grib, step=step)

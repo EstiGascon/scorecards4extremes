@@ -476,7 +476,7 @@ def run_step4(config, extraction_info, preprocess_settings, model_names):
         if removed > 0:
             print(f"  Temperature QC ({min_temp}°C to {max_temp}°C): {len(data)} rows (removed {removed})")
 
-    if config['variable'] == '10ff':
+    if _physical_variable(config['variable']) == '10ff':
         # Remove bad wind speed obs (missing-value flags often appear as very large numbers)
         min_wind = cfg.get('min_valid_wind_speed', 0.0)
         max_wind = cfg.get('max_valid_wind_speed', 100.0)

@@ -174,7 +174,9 @@ def _parse_geo_ncols(filepath):
         raise ValueError(f"Could not parse GEO NCOLS file: {filepath}")
 
     df = pd.DataFrame(rows, columns=header[:len(rows[0])])
-    df['stnid'] = df['stnid'].astype(int)
+    # Some STVL ids are non-numeric (e.g. '_1961389'); matching is by lat/lon, so keep them as strings.
+    numeric_ids = pd.to_numeric(df['stnid'], errors='coerce')
+    df['stnid'] = numeric_ids.astype(int) if numeric_ids.notna().all() else df['stnid']
     df = df.set_index('stnid')
 
     # Convert all quantile columns to float, replace missing (3e38)
