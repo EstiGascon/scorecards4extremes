@@ -45,9 +45,11 @@ Options
                 sh_extratropics, europe, north_america, south_america, asia,
                 africa, oceania, middle_east, southeast_asia,
                 indian_subcontinent, germany, uk, de_pl_cz, central_europe,
-                conus. Add your own by creating case_studies/custom_areas.yaml
+                conus, china. Add your own by creating case_studies/custom_areas.yaml
                 (see case_studies/custom_areas.yaml.example) — no code change
-                needed, it is picked up automatically.
+                needed, it is picked up automatically. Default: Europe, or for
+                CAMS configs with filter.area null, the obs network's domain
+                (cams_extract.NETWORKS).
 """
 
 import argparse
@@ -74,6 +76,7 @@ from case_studies.case_study_utils import (
     classify_events,
     classify_events_probabilistic,
     compute_date_metrics,
+    resolve_domain,
 )
 
 
@@ -127,6 +130,7 @@ ZOOM_REGIONS = {
     "de_pl_cz":       (  5, 25,  47, 56),
     "central_europe": (  2, 26,  43, 59),  # BeNeLux, DE, PL, S.Scandinavia, CZ, HR, RS, HU
     "conus":          (-125, -65, 20, 50),  # continental US — CAMS AirNow (go3/pm2p5) stations
+    "china":          ( 72, 136, 15, 55),   # CAMS China AQ network
 }
 
 
@@ -152,6 +156,7 @@ AREAS = {
     "europe":          [68, -15, 27, 50],
     "nh_extratropics": [90, -180, 20, 180],
     "tropics":         [20, -180, -20, 180],
+    "north_america":   [85, -158, 10, -50],
 }
 
 # Active extent — overridden at startup when --zoom is passed
@@ -850,6 +855,15 @@ def main():
         _ACTIVE_LAT[0], _ACTIVE_LAT[1] = lat0, lat1
         print(f"  Zoom region: {args.zoom}  "
               f"(lon {lon0}–{lon1}, lat {lat0}–{lat1})")
+    elif not config.get("filter", {}).get("area"):
+        # No zoom and no filter.area: use the CAMS obs network's domain, if any
+        name, box = resolve_domain(config, AREAS)
+        if box:
+            lat1, lon0, lat0, lon1 = box
+            _ACTIVE_LON[0], _ACTIVE_LON[1] = lon0, lon1
+            _ACTIVE_LAT[0], _ACTIVE_LAT[1] = lat0, lat1
+            print(f"  Map extent: {name} network domain "
+                  f"(lon {lon0}–{lon1}, lat {lat0}–{lat1})")
 
     model1 = config["read_data"]["forecast_model1"]["name"]
     model2 = config["read_data"]["forecast_model2"]["name"]

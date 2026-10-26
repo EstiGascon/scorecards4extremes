@@ -28,6 +28,24 @@ EUROPE_REGIONS = {
 }
 
 
+# ─── Domain ───────────────────────────────────────────────────────────────────
+
+def resolve_domain(config: dict, areas: dict) -> tuple:
+    """Return (name, [N, W, S, E]) of the area a config covers, or (None, None).
+
+    filter.area (looked up in `areas`) wins; when it is null, CAMS configs fall
+    back to the domain of their predefined ver0d obs network (cams_extract.NETWORKS).
+    """
+    area_name = config.get("filter", {}).get("area")
+    if area_name:
+        return area_name, areas.get(area_name)
+    try:
+        import cams_extract
+    except ImportError:
+        return None, None
+    return cams_extract.network_domain(config)
+
+
 # ─── Threshold loading ────────────────────────────────────────────────────────
 
 def load_per_station_thresholds(config: dict, df: pd.DataFrame) -> np.ndarray:

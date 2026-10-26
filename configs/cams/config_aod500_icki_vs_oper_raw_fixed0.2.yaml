@@ -32,6 +32,7 @@ read_data:
       path: "/home/ecm7338/scorecards4extremes/cams_sample_data/oper"
   observation_source: "cams_netcdf"
   cams_netcdf:
+    network: "aeronet"           # observation network (see cams_extract.NETWORKS)
     obs_path: "/home/ecm7338/scorecards4extremes/cams_sample_data/obs_aeronet"
 
 # ============================================================================

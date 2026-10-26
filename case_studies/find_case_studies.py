@@ -59,6 +59,7 @@ from case_studies.case_study_utils import (
     classify_events_probabilistic,
     compute_date_metrics,
     add_composite_scores,
+    resolve_domain,
 )
 
 
@@ -156,6 +157,7 @@ AREAS = {
     "europe":          [68, -15, 27, 50],
     "nh_extratropics": [90, -180, 20, 180],
     "tropics":         [20, -180, -20, 180],
+    "north_america":   [85, -158, 10, -50],
 }
 
 
@@ -315,14 +317,26 @@ def print_top_cases(df: pd.DataFrame, top_n: int,
     print(f"  • Dates with negligible difference:  {len(df) - n_m1 - n_m2}")
 
 
+def format_domain(config: dict) -> str:
+    """'<name> [N, W, S, E]' for the config's area / obs-network domain."""
+    name, box = resolve_domain(config, AREAS)
+    if name is None:
+        return "all stations (no area set)"
+    src = "filter.area" if config.get("filter", {}).get("area") else "obs network"
+    return f"{name} {box} ({src})"
+
+
 def write_text_summary(all_results: dict[int, pd.DataFrame], output_dir: Path,
-                       name: str, top_n: int, model1: str, model2: str):
+                       name: str, top_n: int, model1: str, model2: str,
+                       domain: str = None):
     """Write a combined text summary for all days."""
     out = output_dir / f"case_study_summary_{name}.txt"
     lines = [
         f"Case Study Summary: {model1} vs {model2}",
-        "=" * 70, ""
     ]
+    if domain:
+        lines.append(f"Domain: {domain}")
+    lines += ["=" * 70, ""]
     for day, df in sorted(all_results.items()):
         if df.empty:
             continue
@@ -364,6 +378,7 @@ def main():
 
     cfg_name = Path(args.config).stem
     use_prob = (mode == "ensemble") and (not args.no_ensemble_prob)
+    domain = format_domain(config)
 
     print(f"\n{'='*70}")
     print(f"  CASE STUDY FINDER")
@@ -371,6 +386,7 @@ def main():
     print(f"  Models    : {model1}  vs  {model2}")
     print(f"  Mode      : {mode} ({'P>0.5 classification' if use_prob else 'mean'})")
     print(f"  Event     : {event_type}")
+    print(f"  Domain    : {domain}")
     print(f"  Parquets  : {parquet_dir}")
     print(f"  Output    : {output_dir}")
     if args.season:
@@ -431,7 +447,7 @@ def main():
 
     if all_results:
         write_text_summary(all_results, output_dir, cfg_name + suffix,
-                           args.top_n, model1, model2)
+                           args.top_n, model1, model2, domain=domain)
 
     print(f"\n{'='*70}")
     print(f"  DONE — {sum(len(v) for v in all_results.values())} date-cases ranked "

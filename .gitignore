@@ -54,3 +54,10 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Local data / job output
+cams_sample_data/
+ERROR_/
+ecsbatch.log.*
+my_run.yaml
+submit_job_*.sh

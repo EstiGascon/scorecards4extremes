@@ -11,15 +11,16 @@
 3. [Configuration File Reference](#3-configuration-file-reference)
 4. [Pipeline Steps in Detail](#4-pipeline-steps-in-detail)
 5. [Supported Variables](#5-supported-variables)
-6. [Threshold Methods](#6-threshold-methods)
-7. [Verification Scores](#7-verification-scores)
-8. [Filters and Quality Control](#8-filters-and-quality-control)
-9. [Output Files and Directory Structure](#9-output-files-and-directory-structure)
-10. [Ensemble Mode](#10-ensemble-mode)
-11. [Obs Climatology Builder](#11-obs-climatology-builder)
-12. [Diagnostic and Analysis Tools](#12-diagnostic-and-analysis-tools)
-13. [Observation Data Format — `.gpt` / Geopoints](#13-observation-data-format--gpt--geopoints)
-14. [Batch Submission on ECMWF HPC](#14-batch-submission-on-ecmwf-hpc)
+6. [CAMS Data Selection](#6-cams-data-selection)
+7. [Threshold Methods](#7-threshold-methods)
+8. [Verification Scores](#8-verification-scores)
+9. [Filters and Quality Control](#9-filters-and-quality-control)
+10. [Output Files and Directory Structure](#10-output-files-and-directory-structure)
+11. [Ensemble Mode](#11-ensemble-mode)
+12. [Obs Climatology Builder](#12-obs-climatology-builder)
+13. [Diagnostic and Analysis Tools](#13-diagnostic-and-analysis-tools)
+14. [Observation Data Format — `.gpt` / Geopoints](#14-observation-data-format--gpt--geopoints)
+15. [Batch Submission on ECMWF HPC](#15-batch-submission-on-ecmwf-hpc)
 
 > **Case-study workflow**: see [CASE_STUDIES.md](CASE_STUDIES.md) for `find_case_studies.py` and `plot_case_study.py`.
 
@@ -51,7 +52,7 @@
 | `2t` | 2 m temperature | °C (after K→°C conversion + optional lapse-rate correction) |
 | `10ff` | 10 m wind speed | m/s (from U/V components) |
 | `tp24` | 24 h total precipitation | mm (after m→mm conversion and optional accumulation) |
-| `aod500`, `pm2p5`, `pm10`, `go3`, `no2`, `so2`, `co`, `no` | CAMS atmospheric composition (AOD / surface chemistry vs AERONET/AirNow) | see [§5 CAMS variables](#5-supported-variables) — different config schema (`source: "cams_netcdf"`), deterministic mode only |
+| `aod500`, `pm2p5`, `pm10`, `go3`, `no2`, `so2`, `co`, `no` | CAMS atmospheric composition, verified against one of four observation networks (AERONET, AirNow, Airbase/EEA, China AQ) selected with `read_data.cams_netcdf.network` | **unit depends on the network** — see [§6 CAMS Data Selection](#6-cams-data-selection). Different config schema (`source: "cams_netcdf"`), deterministic mode only |
 
 ---
 
@@ -392,8 +393,9 @@ parameter is derived from `variable` (`tp24` uses `tp` with a 24 h period).
 CAMS variables (`aod500`, `pm2p5`, `pm10`, `go3`, `no2`, `so2`, `co`, `no`) are read
 straight from raw per-site model/observation NetCDF files — no GRIB, no gridded
 interpolation, and no `backend:` key needed (auto-selected, see below). Both
-`forecast_model1`/`forecast_model2` use `source: "cams_netcdf"`, and
-`observation_source` is `"cams_netcdf"` too:
+`forecast_model1`/`forecast_model2` use `source: "cams_netcdf"`,
+`observation_source` is `"cams_netcdf"` too, and `cams_netcdf.network` names the
+observation network the species is verified against:
 
 ```yaml
 variable: "pm2p5"
@@ -410,8 +412,15 @@ read_data:
       path: "/path/to/oper_airnow"
   observation_source: "cams_netcdf"
   cams_netcdf:
-    obs_path: "/path/to/obs_airnow"      # AirNow (surface chemistry) or AERONET (aod500) NetCDF
+    network: "airnow"                    # aeronet | airnow | airbase | china
+    obs_path: "/path/to/airnow/processed"  # network ROOT; dated subdirs resolved automatically
 ```
+
+`network:` is required whenever more than one network carries the species (all the
+surface species) and optional for `aod500`, which only AERONET provides. It also
+determines the units the scores come out in, so it is not a cosmetic setting —
+see [§6 CAMS Data Selection](#6-cams-data-selection) for the network × species
+matrix, the ver0d archive paths, and copy-paste configs per network.
 
 Model/observation directory paths, names and (optional) `expid`/`run_hour` overrides
 are entirely config-driven — nothing is hardcoded to any specific experiment name.
@@ -447,6 +456,12 @@ Each parquet file contains columns:
 
 The `skip_extraction_if_exists: true` flag skips this step if the parquet files already exist, saving significant time on reruns.
 
+> **Reminder — a short test run will silently shrink a full run.** The check is only
+> "do `*_day{N}.parquet` files exist", not "do they cover `start_date`..`end_date`".
+> So if you trialled a config on a few days and then widen the date range, Step 3 is
+> skipped, the old short files are scored, and the run *looks* successful. Delete the
+> test parquet (or set `skip_extraction_if_exists: false`) before the full run.
+
 For ensemble mode, intermediate per-date files are cached in a `_tmp/` subfolder. If a job is killed and resubmitted, already-extracted dates are automatically skipped.
 
 ### Step 4 — Filter Data
@@ -462,11 +477,11 @@ Applied to the loaded parquet data:
 
 ### Step 5 — Threshold
 
-See [Section 6](#6-threshold-methods).
+See [Section 7](#7-threshold-methods).
 
 ### Step 6 — Scores
 
-See [Section 7](#7-verification-scores).
+See [Section 8](#8-verification-scores).
 
 ### Step 7 — Bootstrap
 
@@ -587,22 +602,28 @@ Because both `skip_*_if_exists` flags are `true`, extraction and scoring are ski
 Read via the raw-NetCDF `cams_extract` backend (`source: "cams_netcdf"`, see
 [Step 1](#4-pipeline-steps-in-detail)) — no GRIB/gridded interpolation involved.
 
-| Variable | Description | Obs network | Unit | Typical threshold |
-|----------|-------------|-------------|------|--------------------|
+| Variable | Description | Obs networks | Unit | Typical threshold |
+|----------|-------------|--------------|------|--------------------|
 | `aod500` | Aerosol optical depth at 500 nm | AERONET | dimensionless | fixed (e.g. 0.2–0.5) |
-| `pm2p5` | PM2.5 surface concentration | AirNow | µg/m³ | fixed 35 (US EPA "Unhealthy for Sensitive Groups" 24h) |
-| `pm10` | PM10 surface concentration | AirNow | µg/m³ | fixed |
-| `go3` | Surface ozone | AirNow | ppb | fixed 70 (US EPA "Unhealthy for Sensitive Groups" 8h O3) |
-| `no2` | Surface NO2 | AirNow | ppb | fixed |
-| `so2` | Surface SO2 | AirNow | ppb | fixed |
-| `co` | Surface CO | AirNow | ppm | fixed |
-| `no` | Surface NO | AirNow | ppb | fixed |
+| `pm2p5` | PM2.5 surface concentration | AirNow, Airbase, China | µg/m³ (all networks) | fixed 35 (AirNow, US EPA 24h) / 25 (Airbase, EU 2030) |
+| `pm10` | PM10 surface concentration | AirNow, Airbase, China | µg/m³ (all networks) | fixed |
+| `go3` | Surface ozone | AirNow, Airbase, China | **ppb** (AirNow) / **µg/m³** (Airbase, China) | fixed 70 ppb (AirNow) / 120 µg/m³ (Airbase) |
+| `no2` | Surface NO2 | AirNow, Airbase, China | **ppb** (AirNow) / **µg/m³** (Airbase, China) | fixed |
+| `so2` | Surface SO2 | AirNow, Airbase, China | **ppb** (AirNow) / **µg/m³** (Airbase, China) | fixed |
+| `co` | Surface CO | AirNow, Airbase, China | **ppm** (AirNow) / **µg/m³** (Airbase, China) | fixed |
+| `no` | Surface NO | AirNow only | ppb | fixed |
+
+> The unit — and therefore the meaning of any `fixed` threshold — **depends on which
+> network you select**. AirNow reports gases as volume mixing ratios, Airbase and
+> China as mass concentrations. [§6 CAMS Data Selection](#6-cams-data-selection) is
+> the authoritative matrix of network × species × obs variable × unit.
 
 Notes and caveats:
 
-- **Unit conversion is automatic** inside `cams_extract.py` (kg/m³→µg/m³ for
-  PM species; kg/kg→ppb/ppm for gases via the molar-mass ratio) — no
-  `unit_conversion_factor` needed in the config.
+- **Unit conversion is automatic** inside `cams_extract.py` — kg/m³→µg/m³ for PM
+  species; kg/kg→ppb/ppm for AirNow gases via the molar-mass ratio; kg/kg→µg/m³ for
+  Airbase/China gases via the air density built from the model file's own `lnsp` and
+  `t_ml137`. No `unit_conversion_factor` is needed (or used) in the config.
 - **Deterministic mode only** — there is no ensemble Step-3 path for CAMS species.
 - **No orography/coastal filtering or lapse-rate correction**: the per-site
   NetCDF has no `sdfor`/`lsm`/height columns, so `filter.orography_type` and
@@ -611,15 +632,427 @@ Notes and caveats:
 - **Threshold methods**: only `fixed`, `dataset_climatology` and
   `model_percentile` apply — `station_climatology` and `local_obs_climatology`
   require pre-built per-station climatology files that don't exist for CAMS
-  species (see [§6 Threshold Methods](#6-threshold-methods)).
+  species (see [§7 Threshold Methods](#7-threshold-methods)).
 - **Area filtering** still works via `filter.area` (predefined boxes: `europe`,
-  `nh_extratropics`, `tropics`) since it's a plain lat/lon subset.
-- Add a new species by registering it in `cams_extract.SPECIES` (model/obs
-  variable names + unit-conversion kind) — no other code changes needed.
+  `nh_extratropics`, `tropics`, `north_america`) since it's a plain lat/lon subset.
+  There is no China/Asia box — use `area: null` for the china network.
+- **Adding a species or network**: a species needs an entry in
+  `cams_extract.SPECIES` (model variable name, molar mass for gases) **and** an
+  entry in the relevant network's `NETWORKS[...]["species"]` map (obs variable name
+  + unit conversion) — the latter is what makes the pair available. A whole new
+  observation network is one `NETWORKS` entry. No other code changes needed.
 
 ---
 
-## 6. Threshold Methods
+## 6. CAMS Data Selection
+
+CAMS atmospheric composition is verified against **point observation networks**, not
+against synoptic station files, so selecting the data means answering three questions
+instead of two. This section is the reference for all three; see
+[§5 CAMS variables](#5-supported-variables) for the species list and general caveats.
+
+### What you select
+
+| # | Config key | What it picks |
+|---|------------|---------------|
+| 1 | `variable` | the **species** — `aod500`, `pm2p5`, `pm10`, `go3`, `no2`, `so2`, `co`, `no` |
+| 2 | `read_data.cams_netcdf.network` | the **observation network** — `aeronet`, `airnow`, `airbase`, `china` |
+| 3 | `cams_netcdf.path` / `.obs_path` | **where** the model and obs NetCDF live |
+
+No `backend:` key is needed — the `cams_extract` backend is auto-selected as soon as
+`variable` is a registered CAMS species (`src/run.py`).
+
+> **The network is not a cosmetic choice.** Model site extractions are produced
+> *per network*, and the same species is reported in **different units** by different
+> networks. Get this wrong and the run either matches no stations or silently scores
+> the wrong quantity — see [Thresholds](#choosing-a-threshold-in-the-right-unit).
+
+### Network × species availability
+
+Each cell gives the **observation variable name** and the **unit the scores come out
+in**. An em dash means that network does not carry that species.
+
+| Species | `aeronet` | `airnow` | `airbase` | `china` |
+|---------|-----------|----------|-----------|---------|
+| `aod500` | `AOT-500nm` — dimensionless | — | — | — |
+| `pm2p5` | — | `PM2.5` µg/m³ | `PM2.5` µg/m³ | `PM2.5` µg/m³ |
+| `pm10` | — | `PM10` µg/m³ | `PM10` µg/m³ | `PM10` µg/m³ |
+| `go3` | — | `OZONE` **ppb** | `O3` **µg/m³** | `O3` **µg/m³** |
+| `no2` | — | `NO2` **ppb** | `NO2` **µg/m³** | `NO2` **µg/m³** |
+| `so2` | — | `SO2` **ppb** | `SO2` **µg/m³** | `SO2` **µg/m³** |
+| `co` | — | `CO` **ppm** | `CO` **µg/m³** | `CO` **µg/m³** |
+| `no` | — | `NO` ppb | — | — |
+
+Roughly: **AirNow reports gases as volume mixing ratios (ppb/ppm); Airbase and China
+report them as mass concentrations (µg/m³).** PM is µg/m³ everywhere. Ozone also
+changes *name*: `OZONE` on AirNow, `O3` on the other two.
+
+- `network:` is **required** for every surface species, since three networks carry
+  each one. Omitting it is an error, not a default.
+- `network:` is **optional for `aod500`** — only `aeronet` carries it, so it is
+  inferred.
+
+The authority for this table is the `NETWORKS` registry in
+[`src/cams_extract.py`](../src/cams_extract.py); adding a species to a network is one
+entry in that network's `species` map.
+
+### How units are reconciled
+
+Model fields are archived in SI-ish units and converted to the obs unit during
+extraction. You do **not** set `unit_conversion_factor` for CAMS species — it is not
+used on this path.
+
+| `conv` | Model native | Becomes | Applied to |
+|--------|--------------|---------|------------|
+| `none` | dimensionless | unchanged | `aod500` |
+| `conc` | kg m⁻³ | µg/m³ (`× 1e9`) | `pm2p5`, `pm10` — all networks |
+| `vmr` | kg kg⁻¹ | ppb / ppm (`× M_air/M_species × 1e9` or `1e6`) | AirNow gases |
+| `density` | kg kg⁻¹ | µg/m³ (`× ρ × 1e9`) | Airbase / China gases |
+
+The `density` route needs air density, built from the model file's own fields:
+
+```
+ρ = exp(lnsp) · (M_air/1000) / (R · t_ml137)      [kg/m³]
+```
+
+which mirrors ver0d's `$mmr2ugm3` factor. The `*_airbase` and `*_china_aq` model
+directories carry both `lnsp` and `t_ml137` for this purpose; the `*_airnow`
+directories carry only `lnsp`, because AirNow verifies in ppb and needs no
+temperature. Pointing a `density` species at an `*_airnow` directory therefore fails
+immediately with a message naming the missing variable, rather than guessing.
+
+### Where the data lives (ECMWF ver0d archive)
+
+All paths are relative to `/ec/vol/cams/ver0d/data/`.
+
+| Network | Model directory | Obs root (`obs_path`) | Dated subdir | Obs filename |
+|---------|-----------------|-----------------------|--------------|--------------|
+| `aeronet` | `mode_aod/model_data/<expid>` | `mode_aod/aeronet_1.5_nrt` | `YYYYMM/DD` | `Aeronet_AOT_L1.5_Table_YYYYMMDD.nc` |
+| `airnow` | `mode_gaw/model_data/<expid>_airnow` | `mode_gaw/airnow/processed` | `YYYYMM` | `airnow_YYYYMMDD.nc` |
+| `airbase` | `mode_gaw/model_data/<expid>_airbase` | `mode_gaw/airbase_ineris_d20/processed` | `YYYY` | `airbase_ineris_YYYYMMDD.nc` |
+| `china` | `mode_gaw/model_data/<expid>_china_aq` | `mode_gaw/china_aq_globvalsvr/processed` | `YYYY` | `china_gsv_YYYYMMDD.nc` |
+
+Note the dated-subdirectory granularity differs per network (month+day, month, year).
+You point `obs_path` at the **root** — the dated subdirectory is derived per day, so a
+date range crossing a month or year boundary needs no special handling. A **flat**
+directory of obs files is also accepted as a fallback, which is why the
+`cams_sample_data/` trees work against the same network entry.
+
+Model files are always `<expid>_<YYYYMMDD>_<HH>.nc`.
+
+### Missing observation data
+
+The obs archive has gaps, and extraction tolerates all of them per day rather than
+aborting the run:
+
+- **Daily obs file absent** (e.g. the Airbase 2025 archive has 354 of 365 days) —
+  that day simply contributes no observations to any window that overlaps it.
+- **File present but the species variable missing** — occasionally a daily file is
+  written without one species (e.g. `airbase_ineris_20250502.nc` carries O3, NO2,
+  PM10, CO and SO2 but no `PM2.5`). This is treated exactly like an absent file:
+  extraction prints `[WARN] <file> has no '<obs_var>' variable — treating <date> as
+  a day without obs` once (the day is cached) and continues.
+- **Whole obs window empty** — when none of the days in a forecast's obs window has
+  data (e.g. dates past the end of the archive), that date is skipped with
+  `[WARN] no obs window for <date> — skipping` and no parquet is written for it.
+
+None of these are errors: scores are computed from whatever (site, step) pairs remain.
+Only a *systematically* empty run — every date skipped — points at a config problem
+(wrong `obs_path` or network), which is caught separately with a hard error listing
+the paths tried.
+
+### Copy-paste configurations
+
+Each block is the `read_data` + `extract_points` + `threshold` portion; take the rest
+(scores, bootstrap, save, plot) from any config in `configs/cams/`.
+
+**AERONET — AOD at 500 nm** (`network:` may be omitted here):
+
+```yaml
+variable: "aod500"
+read_data:
+  forecast_model1:
+    name: "icki"
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_aod/model_data/icki"
+  forecast_model2:
+    name: "oper"
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_aod/model_data/oper"
+  observation_source: "cams_netcdf"
+  cams_netcdf:
+    network: "aeronet"
+    obs_path: "/ec/vol/cams/ver0d/data/mode_aod/aeronet_1.5_nrt"
+extract_points:
+  output_path: "/perm/<user>/scorecards4extremes/extracted_points/cams_aod500_aeronet_icki_vs_oper"
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 0.5              # dimensionless
+```
+
+**AirNow — surface ozone in ppb** (North America):
+
+```yaml
+variable: "go3"
+read_data:
+  forecast_model1:
+    name: "icki_airnow"
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_gaw/model_data/icki_airnow"
+  forecast_model2:
+    name: "oper_airnow"
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_gaw/model_data/oper_airnow"
+  observation_source: "cams_netcdf"
+  cams_netcdf:
+    network: "airnow"
+    obs_path: "/ec/vol/cams/ver0d/data/mode_gaw/airnow/processed"
+extract_points:
+  output_path: "/perm/<user>/scorecards4extremes/extracted_points/cams_go3_airnow_icki_vs_oper"
+filter:
+  area: "north_america"
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 70.0             # ppb  — NOT interchangeable with the airbase value
+```
+
+**Airbase / EEA — surface ozone in µg/m³** (Europe):
+
+```yaml
+variable: "go3"
+read_data:
+  forecast_model1:
+    name: "icki_airbase"
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_gaw/model_data/icki_airbase"
+  forecast_model2:
+    name: "oper_airbase"
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_gaw/model_data/oper_airbase"
+  observation_source: "cams_netcdf"
+  cams_netcdf:
+    network: "airbase"
+    obs_path: "/ec/vol/cams/ver0d/data/mode_gaw/airbase_ineris_d20/processed"
+extract_points:
+  output_path: "/perm/<user>/scorecards4extremes/extracted_points/cams_go3_airbase_icki_vs_oper"
+filter:
+  area: "europe"
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 120.0            # µg/m³
+```
+
+**China AQ — surface ozone in µg/m³**:
+
+```yaml
+variable: "go3"
+read_data:
+  forecast_model1:
+    name: "0080_china_aq"
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_gaw/model_data/0080_china_aq"
+  forecast_model2:
+    name: "oper_china_aq"
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_gaw/model_data/oper_china_aq"
+  observation_source: "cams_netcdf"
+  cams_netcdf:
+    network: "china"
+    obs_path: "/ec/vol/cams/ver0d/data/mode_gaw/china_aq_globvalsvr/processed"
+extract_points:
+  output_path: "/perm/<user>/scorecards4extremes/extracted_points/cams_go3_china_0080_vs_oper"
+filter:
+  area: null                # no predefined China box — see below
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 160.0            # µg/m³
+```
+
+Swap `variable:` for any other species the network carries (see the matrix) and
+adjust the threshold to that species' unit.
+
+### Where the parquet goes, and re-running
+
+Step 3 writes the extracted point data to `extract_points.output_path`:
+
+- **while running** — one file per base date in `<output_path>/_tmp/`, so a job killed
+  by wall time resumes instead of starting over;
+- **at the end** — merged into `<output_path>/<variable>_<fc1_name>_vs_<fc2_name>_day<N>.parquet`,
+  one per forecast day, and `_tmp/` is deleted. If nothing was extracted, `_tmp/` is
+  deliberately kept for inspection.
+
+`save_format: "pandas"` does **not** select the format — CAMS extraction always writes
+parquet. The setting is only passed to Step 4 so it knows how to read the files back;
+changing it will break loading rather than change the output.
+
+> **Reminder 1 — check `output_path` is somewhere you can write.** In this repo
+> `extracted_points/` is a **symlink into another user's `/perm` space**, so it is
+> read-only for everyone else — do not write extraction output there. Point
+> `output_path` at your own space instead, e.g.
+> `/perm/<user>/scorecards4extremes/extracted_points/...` (paths are used literally:
+> `$USER` and `~` are **not** expanded). By contrast `results/` — the Step 8
+> `save.output_directory` — is a normal directory in the repo, so it needs no change.
+> A non-writable `output_path` fails fast with `PermissionError` from the initial
+> `mkdir`, before any data is read, so there is no risk of a half-written dataset —
+> but no run produces output until it is fixed. The pre-aligned configs
+> (`config_*_fixed*.yaml`, without `raw`) still point at the shared directory on
+> purpose: they only *read* parquet from it.
+
+> **Reminder 2 — a short test run will silently shrink a full run.** With
+> `skip_extraction_if_exists: true` (set in every CAMS config), `run.py` skips Step 3
+> as soon as the `*_day{N}.parquet` files exist. It does not check that they cover
+> `start_date`..`end_date`. So after trialling a config on two or three days, delete
+> the test parquet or set the flag to `false` before running the full period —
+> otherwise the short test files are scored and the scorecard looks fine while
+> covering days instead of a year. See also [Step 3](#step-3--extract-points).
+
+### Experiment IDs and model directory names
+
+`expid` defaults to the model's `name:`, and it must be the **full directory
+basename**, because files are `<expid>_<YYYYMMDD>_<HH>.nc`. Override it explicitly
+only when `name:` needs to differ (`name:` is what appears in output filenames and
+plot labels):
+
+```yaml
+  forecast_model1:
+    name: "control"                                  # label used in filenames
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_gaw/model_data/icki_airbase"
+      expid: "icki_airbase"                          # actual file prefix
+```
+
+> **Do not construct the suffix yourself.** In ver0d it is a settings-file basename,
+> not `expid + "_" + network`. For the china network, `oper_china_aq` exists but
+> `oper_china` does not, while `icki_china` exists and `icki_china_aq` does not.
+> List the directory and use what is there.
+
+Extraction prints a `[WARN]` if an expid does not end with the suffix expected for the
+selected network. It is only a warning, because of the naming irregularity above — but
+if you have genuinely crossed networks, the run then reports **"no matched rows"**,
+since the model station list belongs to a different network than the observations.
+
+### Choosing a threshold in the right unit
+
+This is the easiest way to get a plausible-looking but meaningless scorecard. A
+`fixed` threshold of `70` means **70 ppb** on AirNow but **70 µg/m³** (≈ 35 ppb) on
+Airbase — a completely different event. Nothing in the pipeline can detect the
+mistake; it simply scores the wrong exceedances.
+
+Values used by the shipped configs, as **illustrative** starting points rather than
+authoritative regulatory limits:
+
+| Species | Network | Threshold | Rationale |
+|---------|---------|-----------|-----------|
+| `aod500` | `aeronet` | 0.2 – 0.5 | dimensionless; pick per aerosol regime |
+| `pm2p5` | `airnow` | 35 µg/m³ | US EPA "Unhealthy for Sensitive Groups", 24 h |
+| `pm2p5` | `airbase` | 25 µg/m³ | EU 2030 24 h limit value |
+| `go3` | `airnow` | 70 ppb | US EPA 8 h O₃ standard |
+| `go3` | `airbase` | 120 µg/m³ | EU 8 h target value |
+| `go3` | `china` | 160 µg/m³ | CN Grade II 8 h limit |
+
+`dataset_climatology` and `model_percentile` are unit-agnostic and therefore safe
+across networks — prefer them when comparing the *same* species across *different*
+networks. `local_obs_climatology` and `station_climatology` are unavailable for CAMS
+species (see [§7 Threshold Methods](#7-threshold-methods)).
+
+### Area filtering
+
+Only four named boxes exist (`src/filter.py`):
+
+| Name | lat / lon box |
+|------|----------------|
+| `europe` | 27–68 N, 15 W–50 E |
+| `nh_extratropics` | 20–90 N, global |
+| `tropics` | 20 S–20 N, global |
+| `north_america` | 10–85 N, 158–50 W |
+
+There is **no China or Asia box**. Use `area: null` for the china network — its
+station list already constrains the geography. Each network is regional anyway
+(AirNow ≈ North America, Airbase ≈ Europe, china_aq ≈ China; AERONET is global), so
+area filtering is usually optional.
+
+> An **unrecognised** area name is not an error: it prints a warning and leaves the
+> data completely unfiltered. Check the Step-4 log line if a run returns more
+> stations than you expected.
+
+### Ready-made configs
+
+| Config | Data |
+|--------|------|
+| `configs/cams/config_aod500_ver0d_aeronet_fixed0.5.yaml` | real archive, AERONET |
+| `configs/cams/config_go3_ver0d_airbase_fixed120.yaml` | real archive, Airbase |
+| `configs/cams/config_go3_ver0d_china_fixed160.yaml` | real archive, China |
+| `configs/cams/config_pm2p5_ver0d_airbase_fixed25.yaml` | real archive, Airbase |
+| `configs/cams/config_pm2p5_icki_vs_oper_raw_eccams_fixed35.yaml` | real archive, AirNow |
+| `configs/cams/config_*_raw_*.yaml` | `cams_sample_data/` sample tree |
+
+### Optional overrides
+
+Under `read_data.cams_netcdf` (obs side) — needed only for a layout the registry does
+not already describe:
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `obs_subdir` | per network | strftime pattern of the dated subdir; `null` for flat |
+| `obs_filename` | per network | strftime pattern of the daily obs file |
+| `engine` | `null` (auto) | xarray engine. Auto works archive-wide: AERONET files are netCDF-3 classic, the rest HDF5 |
+| `obs_pad_days` | `1` for `aeronet`, else `0` | extra days read either side of the obs window |
+
+Under each `forecast_model*.cams_netcdf` (model side):
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `expid` | the model's `name:` | file prefix |
+| `run_hour` | `"00"` | forecast cycle |
+
+Only 00Z is available for the gaw networks (`airnow`, `airbase`, `china`); `mode_aod`
+also holds 12Z runs, and analysis (`*_an`) expids are 6-hourly.
+
+`obs_pad_days` exists because AERONET files sometimes contain records timestamped in a
+neighbouring day, so ver0d widens its AOD search by ±1 day and this backend does the
+same. Padding cannot pull in out-of-window observations — every obs is binned by its
+own timestamp and kept only if it falls within ±1.5 h of a real model step — so a
+wider read only recovers misfiled records. In practice it affects the shortest lead
+time (step 3, nearest midnight) and leaves later forecast days untouched.
+
+### Troubleshooting
+
+| Message | Cause | Fix |
+|---------|-------|-----|
+| `variable 'pm2p5' is available from several networks [...] — set read_data.cams_netcdf.network` | `network:` omitted for a species carried by more than one network | add `network:` |
+| `unknown observation network 'X' (known: [...])` | typo in `network:` | use one of the listed names |
+| `network 'airbase' does not carry variable 'no'` | that pair does not exist | pick a network that carries it (message lists them) |
+| `needs conv='density', which requires ['lnsp', 't_ml137'] [...] but ['t_ml137'] are absent` | a µg/m³ gas pointed at an `*_airnow` model dir | point at the `*_airbase` / `*_china_aq` extraction |
+| `no <network> observation files found for any of the N date(s) tried` (lists the paths tried) | wrong `obs_path`, or root vs dated subdir confusion | compare the printed candidates with the archive table above |
+| `[WARN] ... expid 'X' does not end with '_airbase'` | expid may belong to another network | verify the directory; harmless if the ver0d name is irregular |
+| `[WARN] <file> has no '<obs_var>' variable — treating <date> as a day without obs` | archive gap: that daily file was written without the species (see *Missing observation data* above) | none needed — the day is skipped, the run continues |
+| `[WARN] no obs window for <date> — skipping` | no obs data in that forecast's whole window (missing files, or dates past the archive end) | none needed if occasional; if it hits *every* date, check `obs_path` |
+| `[WARN] no matched rows` on every date | model and obs are from different networks, so station IDs never intersect | make the model dir and `network:` agree |
+| Scores look wrong but the run "worked" | threshold in the wrong unit | check the unit column in the matrix above |
+
+The Step-3 header echoes the resolved network, obs variable, conversion mode, and the
+exact obs paths being tried — check it first when a run comes back empty.
+
+---
+
+## 7. Threshold Methods
 
 All methods are specified under `threshold.method` in the config.
 
@@ -691,7 +1124,7 @@ Retrieves per-station percentiles from the STVL ECMWF observation climatology da
 
 ---
 
-## 7. Verification Scores
+## 8. Verification Scores
 
 ### Deterministic scores
 
@@ -756,7 +1189,7 @@ For **warm/wet extremes** (`event_type: above`):
 
 ---
 
-## 8. Filters and Quality Control
+## 9. Filters and Quality Control
 
 ### Season
 
@@ -792,7 +1225,7 @@ Stations with `lsm < coastal_lsm_threshold` (default 0.9) are considered coastal
 
 ---
 
-## 9. Output Files and Directory Structure
+## 10. Output Files and Directory Structure
 
 ```
 /perm/user/results/my_experiment/
@@ -838,7 +1271,7 @@ and the color convention flips between the two groups:
 
 ---
 
-## 10. Ensemble Mode
+## 11. Ensemble Mode
 
 Set `mode: "ensemble"` and list `steps` instead of `forecast_days`.
 
@@ -920,7 +1353,7 @@ substituting an external control file.
 
 ---
 
-## 11. Obs Climatology Builder
+## 12. Obs Climatology Builder
 
 The `local_obs_climatology` threshold method requires pre-built climatology files.
 
@@ -967,7 +1400,7 @@ sbatch obs_clim_local_Italy/run.sh
 
 ---
 
-## 12. Diagnostic and Analysis Tools
+## 13. Diagnostic and Analysis Tools
 
 ### `diagnostics/diagnose_extremes.py` — Comprehensive single-condition diagnostics
 
@@ -1107,7 +1540,7 @@ python case_studies/plot_case_study.py \
 
 ---
 
-## 13. Observation Data Format — `.gpt` / Geopoints
+## 14. Observation Data Format — `.gpt` / Geopoints
 
 Observation files must be in **Geopoints** format (file extension `.gpt` or
 `.geo`). Geopoints is a plain-text format originally defined by Metview/ECMWF,
@@ -1188,7 +1621,7 @@ for date, group in df.groupby("date"):
 
 ---
 
-## 14. Batch Submission on ECMWF HPC
+## 15. Batch Submission on ECMWF HPC
 
 ### Submitting a job
 

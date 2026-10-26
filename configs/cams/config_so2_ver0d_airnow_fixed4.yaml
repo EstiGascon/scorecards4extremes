@@ -1,0 +1,119 @@
+# ============================================================================
+# CAMS SO2 vs AirNow (US EPA) — 4 ppb (= 10.5 ug/m3 at 25C; matches Airbase 10 ug/m3)
+# icki_airnow (control) vs oper_airnow, fixed threshold 4.0 ppb
+# Reads RAW NetCDF from the ver0d archive directly — no pre-built parquet needed.
+# obs SO2 in ppb; model kg/kg converted to ppb (conv='vmr', x M_air/M_SO2 x 1e9)
+# (10 ug/m3 x 24.45/64.07 = 3.8 ppb. US NAAQS 1h 75 ppb is almost never reached;
+#  4 ppb gives ~5% obs events in winter, ~1.6% in summer — test Jan/Jul 2025)
+# ============================================================================
+# Step 3 performs the full read+align+convert (cams_extract.py backend), then
+# writes the standard pipeline parquet so Steps 4-9 are unchanged.
+# ============================================================================
+
+variable: "so2"
+start_date: "2025-01-01"
+end_date:   "2025-12-31"
+mode: "deterministic"
+forecast_days: [1, 2, 3, 4, 5]     # steps 3..120 h -> days 1..5
+lead_time_frequency: 3             # model steps are 3-hourly; keep all
+skip_extraction_if_exists: true    # reuse extracted parquet on rerun
+skip_scoring_if_exists:    false
+skip_daily_aggregation:    true    # score at native 3-hourly resolution (no daily mean)
+
+# ============================================================================
+# STEP 1: READ DATA  (raw per-site NetCDF, read directly by cams_extract.py)
+# ============================================================================
+read_data:
+  forecast_model1:
+    name: "icki_airnow"            # control experiment (reference) -> fc1_value
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_gaw/model_data/icki_airnow"
+  forecast_model2:
+    name: "oper_airnow"            # experiment being evaluated -> fc2_value
+    source: "cams_netcdf"
+    cams_netcdf:
+      path: "/ec/vol/cams/ver0d/data/mode_gaw/model_data/oper_airnow"
+  observation_source: "cams_netcdf"
+  cams_netcdf:
+    network: "airnow"          # observation network (see cams_extract.NETWORKS)
+    obs_path: "/ec/vol/cams/ver0d/data/mode_gaw/airnow/processed"   # dated YYYY/ subdirs resolved from the network registry
+
+# ============================================================================
+# STEP 2: PRE-PROCESS  (all off — species already unit-converted in cams_extract.py)
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  precipitation_accumulation_hours: null
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA  (real extraction — reads raw NetCDF)
+# ============================================================================
+extract_points:
+  output_path: "/perm/ecm7338/scorecards4extremes/extracted_points/cams_so2_airnow_icki_airnow_vs_oper_airnow"
+  save_format: "pandas"
+
+# ============================================================================
+# STEP 4: FILTER DATA
+# ============================================================================
+filter:
+  area: null                     # airnow network domain
+  lead_times: null
+  season: ["DJF", "MAM", "JJA", "SON"]
+  orography_type: "all"             # parquet has no 'sdfor' column
+  remove_coastal_stations: false    # parquet has no 'lsm' column
+  remove_outliers: false
+
+# ============================================================================
+# STEP 5: THRESHOLD  (fixed 4.0 ppb — AirNow SO2 is a volume mixing ratio)
+# ============================================================================
+threshold:
+  method: "fixed"
+  event_type: "above"
+  fixed:
+    value: 4.0
+
+# ============================================================================
+# STEP 6: SCORES
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+    - "correlation"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE
+# ============================================================================
+save:
+  output_directory: "./results/so2_airnow_icki_airnow_vs_oper_airnow_fixed4.0"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  enabled: true
+  heatmap_style: "smooth"
+  create_summary: true
+  dpi: 300
+  format: "png"
