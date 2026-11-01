@@ -9,7 +9,7 @@
 
 variable: "2t"
 start_date: "2025-07-02"
-end_date: "2026-03-08"
+end_date: "2026-07-01"
 mode: "ensemble"
 steps: [6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90, 96, 102, 108, 114, 120, 126, 132, 138, 144, 150, 156, 162, 168, 174, 180, 186, 192, 198, 204, 210, 216, 222, 228, 234, 240]
 skip_extraction_if_exists: true
@@ -78,7 +78,7 @@ auxiliary_fields:
 # ============================================================================
 filter:
   lead_times: null
-  season: ["DJF", "JJA", "SON"]
+  season: ["DJF", "MAM", "JJA", "SON"]
   orography_type: ["low", "mid", "high"]
   orography_ranges:
     low:  [0, 40]
@@ -86,8 +86,6 @@ filter:
     high: [120, 3000]
   remove_coastal_stations: true
   coastal_lsm_threshold: 0.9
-  remove_outliers: true
-  outlier_threshold_std: 5.0
   min_valid_temperature: -60.0
   max_valid_temperature: 60.0
 
@@ -117,9 +115,9 @@ scores:
     - "Brier"
     - "BSS"
     - "tw_quantile_score"
-    - "tw_quantile_score_q090"
-    - "tw_quantile_score_q095"
     - "tw_quantile_score_q099"
+    - "tw_quantile_score_q0995"
+    - "tw_quantile_score_q0999"
     - "extreme_spread_skill_ratio"
   stratify_by:
     - "lead_time"

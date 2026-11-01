@@ -40,7 +40,7 @@ threshold:
   method: local_obs_climatology
   local_obs_climatology:
     path: /path/to/clim/files
-    parameter: 2t
+    parameter: 2t              # 2t | mx2t | mn2t | 10ff | tp  (selects clim_<parameter>_* files)
     percentile: 99
     window_days: 1
     n_years: 20
@@ -49,6 +49,10 @@ threshold:
     min_availability_pct: 65
     max_match_dist: 0.1
 ```
+
+> For `mx2t`/`mn2t` set `parameter: mx2t` / `mn2t` so the daily-max / daily-min
+> obs percentiles (`clim_mx2t_*` / `clim_mn2t_*`) are loaded — consistent with
+> the daily max/min applied to the forecast in Step 5b.
 
 ---
 
@@ -114,14 +118,24 @@ with `NaN` for unmatched stations.
 
 ### What it should do
 Only triggered when `threshold.method == 'local_obs_climatology'` AND
-`lead_time_frequency < 24`. Groups by `(lat, lon, date, forecast_day)` and takes the
-mean of all sub-daily steps for obs, fc1, fc2 (and ensemble members). Realigns the
-threshold Series to the aggregated index.
+`lead_time_frequency < 24`. Groups by `(lat, lon, date, forecast_day)` and collapses
+all sub-daily steps for obs, fc1, fc2 (and ensemble members) to one value per day.
+The aggregation function is chosen by `utils.daily_aggregation_method(config['variable'])`:
+`mean` for `2t`, `max` for `mx2t`, `min` for `mn2t`. Realigns the threshold Series to
+the aggregated index.
+
+> **`mx2t` / `mn2t`.** These variables reuse the ordinary 6-hourly `2t` and only
+> differ here: the sub-daily reduction is `max`/`min` instead of `mean` (applied
+> identically to obs and both forecasts). Their threshold reads the matching
+> daily-max / daily-min climatology (`clim_mx2t_*` / `clim_mn2t_*`, built by
+> `obs_clim_local/run_mx2tmn2t.sh`), so the scored distribution matches the
+> climatological percentile — see the consistency note below.
 
 ### Why this step is needed
-The local obs climatology is built from **daily-mean** obs. Scoring sub-daily values
-against a daily-mean percentile threshold is inconsistent — the forecast distribution
-being scored must match the distribution the climatological percentile was derived from.
+The local obs climatology is built from a **daily-aggregated** obs series (daily mean
+for `2t`, daily max for `mx2t`, daily min for `mn2t`). Scoring sub-daily values against
+that daily percentile threshold is inconsistent — the forecast distribution being
+scored must match the distribution the climatological percentile was derived from.
 
 ### What to check in the code
 - **Called AFTER** `run_step5` (threshold computed on sub-daily data, then aggregated).
@@ -350,6 +364,6 @@ These can be checked programmatically to validate a run:
 | Daily aggregation | `run.py` | `_aggregate_to_daily_mean()` |
 | Deterministic scores | `det_scores.py` | `calculate_ets()`, `calculate_twmae()`, `run_step6()` |
 | Ensemble scores | `ens_scores.py` | `_process_single_day()`, `calculate_ensemble_scores()`, `_fair_crps_numpy()` |
-| Bootstrap | `bootstrap.py` | `run_step7()` |
+| Bootstrap | `det_scores.py` / `ens_scores.py` | `run_step6()` (det), `bootstrap_paired_significance()` (ens) |
 | Heatmap | `plot.py` | `create_heatmap()`, `_get_color_limit()` |
 | Orchestration | `run.py` | `main()` — Step 5b trigger logic around lines 557 and 847 |

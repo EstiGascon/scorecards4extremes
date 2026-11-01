@@ -1,0 +1,173 @@
+# ============================================================================
+# DETERMINISTIC — METHOD 2 (MARS + STVL) — tp24 heavy precip (p99), FULL YEAR
+# 0.25/0.25 CONSERVATIVE (grid-box-average) REGRID variant
+# ============================================================================
+# Method-2 counterpart of the method-3 regridded tp24 deterministic job
+# (config_tp24_method3_quaverextract_p99obsclim_ifsvsaifs_fullyear_regrid025.yaml).
+# Same period / season split / orography split / threshold / 0.25deg conservative
+# regrid — so the two can be compared to assess method (2 vs 3) effects in
+# addition to the native-vs-regridded comparison.
+#
+# Evaluated model  : IFS deterministic operational  (ifs_oper,     od/oper/0001)
+# Reference model  : AIFS deterministic operational (aifs1.0_oper, ai/oper/0001)
+#
+# Both models retrieved on a 0.25/0.25 grid with conservative (grid-box-average)
+# interpolation via src/mars_retrieve.py (interpolation keyword support added
+# this session). GRIB cache lives on /ec/vol/destine2 (ample headroom) — the
+# original /ec/vol/destine volume filled to 100% earlier this session.
+#
+# Period matches the ACTUAL tp24 ensemble full-year coverage (2025-03-09 ->
+# 2026-03-08) — see /memories/session/fullyear_backward_gapfill_2t_tp24.md.
+# ============================================================================
+
+variable: "tp24"
+start_date: "2025-03-09"
+end_date: "2026-03-08"
+mode: "deterministic"
+backend: "local"
+forecast_days: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+lead_time_frequency: 24
+skip_extraction_if_exists: true
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA — retrieve deterministic HRES from MARS (forecasts) + STVL (obs)
+# ============================================================================
+read_data:
+  forecast_model1:                       # IFS deterministic operational (reference)
+    name: "ifs_oper"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: od
+      type: fc
+      stream: oper
+      expver: "0001"
+      levtype: sfc
+      time: "00"
+      grid: "0.25/0.25"
+      interpolation: "grid-box-average"   # conservative, matches the 0.25deg product
+      base_path: "/ec/vol/destine2/scorecards4extremes/precip/forecast_det/raw"
+
+  forecast_model2:                       # AIFS deterministic operational (evaluated)
+    name: "aifs1.0_oper"
+    source: "mars"
+    unit_conversion_factor: 1.0          # AIFS tp already in kg m-2 (= mm)
+    mars:
+      class: ai
+      type: fc
+      stream: oper
+      expver: "0001"
+      levtype: sfc
+      time: "00"
+      grid: "0.25/0.25"
+      interpolation: "grid-box-average"
+      base_path: "/ec/vol/destine2/scorecards4extremes/precip/forecast_det/raw"
+
+  observation_source: "stvl"
+  stvl:
+    sources: ["synop", "hdobs"]
+    base_path: "/ec/vol/destine2/scorecards4extremes/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_method2_marsstvl_p99obsclim_ifsvsaifs_fullyear_regrid025"
+  save_format: "pandas"
+  area: "europe"
+
+# ============================================================================
+# AUXILIARY FIELDS (AIFS runs on its own grid — separate lsm/orog)
+# ============================================================================
+auxiliary_fields:
+  model1:                                # IFS deterministic operational
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:                                # AIFS deterministic operational
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/aifs_lsm.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/aifs_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — season split + orography split
+# ============================================================================
+filter:
+  lead_times: null
+  season: ["DJF", "MAM", "JJA", "SON"]
+  orography_type: ["flat", "hilly", "complex"]
+  orography_ranges:
+    flat:    [0, 40]
+    hilly:   [40, 120]
+    complex: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  min_valid_precipitation: 0.0
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "tp"
+    percentile: 99
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+
+# ============================================================================
+# STEP 6: SCORES (deterministic)
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 200
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_method2_marsstvl_p99obsclim_ifsvsaifs_fullyear_regrid025"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"

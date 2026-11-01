@@ -42,15 +42,18 @@
 
 | Mode | Use case | Key scores |
 |------|----------|------------|
-| `deterministic` | Single-valued forecast vs obs | ETS, PSS, POD, FAR, twMAE, twRMSE, bias, MAE, RMSE |
-| `ensemble` | Probabilistic ensemble forecast | twCRPS, fCRPS, Brier, BSS, twQS (multi-level), extreme_spread_skill_ratio |
+| `deterministic` | Single-valued forecast vs obs | SEDI, EDI, ETS, PSS, POD, FAR, twMAE (+ components), twRMSE, bias, MAE, RMSE, SEEPS (tp24) |
+| `ensemble` | Probabilistic ensemble forecast | twCRPS, fCRPS, CRPSS, Brier, BSS, reliability, twQS (multi-level), extreme_spread_skill_ratio, ens_spread (all finite-ensemble corrected) |
 
 ### Supported variables
 
 | Variable | Description | Unit |
 |----------|-------------|------|
-| `2t` | 2 m temperature | °C (after K→°C conversion + optional lapse-rate correction) |
+| `2t` | 2 m temperature (daily **mean**) | °C (after K→°C conversion + optional lapse-rate correction) |
+| `mx2t` | Daily **maximum** 2 m temperature (derived from 6-hourly `2t`) | °C — same as `2t`; warm-extreme (p99) verification |
+| `mn2t` | Daily **minimum** 2 m temperature (derived from 6-hourly `2t`) | °C — same as `2t`; cold-extreme (p1) verification |
 | `10ff` | 10 m wind speed | m/s (from U/V components) |
+| `mx10ff` | Daily **maximum** 10 m wind speed (derived from 6-hourly `10ff`) | m/s — same as `10ff`; strong-wind (p99) verification |
 | `tp24` | 24 h total precipitation | mm (after m→mm conversion and optional accumulation) |
 | `aod500`, `pm2p5`, `pm10`, `go3`, `no2`, `so2`, `co`, `no` | CAMS atmospheric composition, verified against one of four observation networks (AERONET, AirNow, Airbase/EEA, China AQ) selected with `read_data.cams_netcdf.network` | **unit depends on the network** — see [§6 CAMS Data Selection](#6-cams-data-selection). Different config schema (`source: "cams_netcdf"`), deterministic mode only |
 
@@ -75,7 +78,6 @@ scorecards4extremes/
 │   ├── threshold.py                ← Step 5: Compute event threshold
 │   ├── det_scores.py               ← Step 6: Deterministic verification scores
 │   ├── ens_scores.py               ← Step 6: Ensemble verification scores
-│   ├── bootstrap.py                ← Step 7: Bootstrap confidence intervals
 │   ├── save.py                     ← Step 8: Write results to CSV
 │   ├── plot.py                     ← Step 9: Draw heatmap scorecards
 │   ├── cams_extract.py             ← Step 3 backend: raw CAMS NetCDF extraction
@@ -91,6 +93,7 @@ scorecards4extremes/
 │   ├── diagnose_extremes.py        ← Comprehensive single-condition diagnostic (22 plots)
 │   ├── diagnose_det_extremes_simple.py ← Quick 3-panel deterministic diagnostic
 │   ├── diagnose_twcrps_simple.py   ← Quick 3-panel ensemble diagnostic
+│   ├── diagnose_ens_extremes.py    ← Comprehensive ensemble diagnostic (twCRPS vs quantile score)
 │   ├── plot_qq_extremes.py         ← Q-Q plot with warm + cold zoom panels
 │   ├── plot_qq.py                  ← Full-range Q-Q plot
 │   └── plot_station_diagnostics.py ← Per-station spatial maps (mode auto-detected)
@@ -123,6 +126,13 @@ scorecards4extremes/
 │   ├── submit_qq.sh                ← Q-Q plot SLURM wrapper
 │   ├── submit_diagnose.sh          ← diagnose_extremes.py SLURM wrapper
 │   ├── check_mx2t_availability.sh  ← MARS mx2t availability check
+│   ├── chunk_extraction.py         ← Split an extraction into date chunks / merge them back
+│   ├── watch_and_score.sh          ← Waits for chunks, merges, scores (+ extra configs, post step)
+│   ├── check_extracted.py          ← Guard: is a config's merged extraction complete?
+│   ├── plot_combined_regions.py    ← One scorecard with NH-orography + tropics columns
+│   ├── plot_ocean_twcrps_panels.py ← Multi-experiment panel per variable (--score twCRPS|Brier|…)
+│   ├── plot_ocean_ranking_summary.py ← Experiment ranking summary plots (--score …)
+│   ├── make_ocean_ens_configs.py   ← Example generator: many experiments × regions × variables
 │   └── ...                         ← Other batch/utility helpers
 │
 └── docs/                           ← This documentation folder
@@ -136,7 +146,7 @@ Every experiment is defined by a single YAML file. Below is a fully-annotated te
 
 ```yaml
 # ── Basic settings ─────────────────────────────────────────────────────────
-variable: "2t"              # tp24 | 2t | 10ff | aod500 | pm2p5 | pm10 | go3 | no2 | so2 | co | no
+variable: "2t"              # tp24 | 2t | mx2t | mn2t | 10ff | mx10ff | aod500 | pm2p5 | pm10 | go3 | no2 | so2 | co | no
 start_date: "2025-08-01"    # inclusive, YYYY-MM-DD
 end_date:   "2026-02-28"    # inclusive, YYYY-MM-DD
 mode: "deterministic"       # deterministic | ensemble
@@ -179,7 +189,8 @@ preprocess:
 extract_points:
   output_path: "/perm/user/extracted_points/my_experiment"
   save_format: "pandas"   # only "pandas" (parquet) currently supported
-  area: "europe"          # bounding box filter applied during extraction
+  area: "europe"          # europe | nh_extratropics | tropics | nh_extratropics_tropics | [N, W, S, E]
+                          # bounding box applied during extraction (null = no box; see filter.area)
 
 # ── Auxiliary fields (for lapse-rate correction and terrain classification) ─
 auxiliary_fields:
@@ -193,6 +204,8 @@ auxiliary_fields:
 
 # ── STEP 4: Filter data ────────────────────────────────────────────────────
 filter:
+  area: null             # optional named region selected AFTER extraction (requires
+                         # extract_points.area: null) — lets one extraction be scored per region (§8)
   lead_times: null       # null = use all; or list of hours e.g. [24, 48, 72]
   season: ["DJF", "JJA"]  # DJF | MAM | JJA | SON | ASO (Aug-Sep-Oct) | null
   orography_type: ["flat", "hilly", "complex"]
@@ -202,8 +215,6 @@ filter:
     complex: [120, 3000]
   remove_coastal_stations: true
   coastal_lsm_threshold: 0.9     # stations with lsm < 0.9 are considered coastal
-  remove_outliers: false
-  outlier_threshold_std: 5.0
   min_valid_temperature: -60.0   # 2t QC bounds (°C)
   max_valid_temperature:  60.0
   max_valid_precipitation: 800.0 # tp24 QC ceiling (mm)
@@ -247,12 +258,11 @@ scores:
     - "Brier"
     - "BSS"
     - "tw_quantile_score"
-    - "tw_quantile_score_q001"   # extreme tail (cold below / warm above)
-    - "tw_quantile_score_q005"
-    - "tw_quantile_score_q010"
-    - "tw_quantile_score_q090"
-    - "tw_quantile_score_q095"
-    - "tw_quantile_score_q099"
+    - "tw_quantile_score_q001"   # cold: α=0.001 (deep tail, below column syntax)
+    - "tw_quantile_score_q0005"  # cold: α=0.005
+    - "tw_quantile_score_q099"   # warm: α=0.99
+    - "tw_quantile_score_q0995"  # warm: α=0.995
+    - "tw_quantile_score_q0999"  # warm: α=0.999
     - "extreme_spread_skill_ratio"
   stratify_by:
     - "lead_time"
@@ -330,8 +340,10 @@ The data is stored in a folder **derived from the MARS identity keys**:
 `.../raw/od_enfo_0001`). Because the folder name is built from the same keys used to
 retrieve, **the folder can never disagree with the expver retrieved** — this removes
 the long-standing footgun of a hand-named folder not matching its contents. `param` is
-derived from `variable` (`2t`→`2t`, `10ff`→`10u`+`10v`, `tp24`→`tp`); files are written
-with the standard names the extractor reads (`2t_YYYYMMDD.grib`, etc.). For
+derived from `variable` (`2t`/`mx2t`/`mn2t`→`2t`, `10ff`→`10u`+`10v`, `tp24`→`tp`);
+files are written with the standard names the extractor reads (`2t_YYYYMMDD.grib`,
+etc.). `mx2t`/`mn2t` retrieve ordinary `2t` (they are NOT native archived fields) and
+differ only in the daily aggregation applied at scoring time. For
 `mode: ensemble` the control and 50 perturbed (`pf`) members are retrieved
 together. `base_path` must not be under `$HOME` (small quota) — use `/ec/vol/...`,
 `$SCRATCH`, or `$HPCPERM`.
@@ -473,7 +485,7 @@ Applied to the loaded parquet data:
 3. **Season** — filter by month. Supported seasons: `DJF` (Dec–Feb), `MAM` (Mar–May), `JJA` (Jun–Aug), `SON` (Sep–Nov), `ASO` (Aug–Oct).
 4. **Orography** — stations classified by `sdfor` (sub-grid standard deviation of orography): flat (0–40 m), hilly (40–120 m), complex (>120 m).
 5. **Coastal removal** — stations with `lsm < coastal_lsm_threshold` are removed.
-6. **QC filters** — temperature bounds, precipitation ceiling, outlier sigma clipping.
+6. **QC filters** — temperature bounds and precipitation ceiling (physical-validity caps).
 
 ### Step 5 — Threshold
 
@@ -485,7 +497,7 @@ See [Section 8](#8-verification-scores).
 
 ### Step 7 — Bootstrap
 
-Generates 95% confidence intervals for score differences using block bootstrap resampling over dates × stations. The result for each score is stored as `score_diff`, `ci_lower`, `ci_upper` columns in the output CSV. Cells where the CI does not include zero are considered statistically significant.
+Generates 95% confidence intervals for score differences using a paired **date-block** bootstrap: whole initialisation dates are resampled with replacement, keeping all stations of a drawn date together, so same-day spatial correlation between stations does not inflate the effective sample size. This applies to both backends (`local` and `quaver`); if a cell has fewer than 5 distinct dates it falls back to case-level resampling. It runs inside Step 6, not as a separate module. The result for each score is stored as `score_diff`, `ci_lower`, `ci_upper` columns in the output CSV. Cells where the CI does not include zero are considered statistically significant.
 
 ### Step 8 — Save
 
@@ -523,6 +535,7 @@ All options live under the `plot:` block. Only these keys are read — any other
 | `dpi` | integer | `300` | Output resolution in dots-per-inch. Lower (e.g. `150`) for quick previews, higher for print. |
 | `format` | `"png"` / `"pdf"` / `"svg"` | `"png"` | Output file type. Use `pdf`/`svg` for scalable vector figures. |
 | `forecast_days` | list of ints, e.g. `[1, 3, 5]` | all scored days | Restrict the heatmap columns to these lead days. Omit to show every day that was scored. |
+| `color_limits` | mapping, e.g. `{twMAE: 20}` or `{default: 20}` | built-in per score (e.g. twMAE ±50%) | Symmetric colourbar range (±%) of the % difference heatmaps, per score name; `default` applies to every score not listed. Use a narrower range when differences are small. |
 
 #### What gets produced
 
@@ -581,6 +594,47 @@ Because both `skip_*_if_exists` flags are `true`, extraction and scoring are ski
 - Typical threshold: p1 (cold extremes) or p99 (warm extremes) from obs climatology
 - `lead_time_frequency: 6` gives 6-hourly steps; results aggregated to daily means before scoring
 
+### Daily Max / Min 2m Temperature (`mx2t` / `mn2t`)
+
+`mx2t` and `mn2t` verify the **daily maximum** and **daily minimum** 2 m
+temperature. They are **not** native archived fields (many models, e.g. AIFS,
+do not store `mx2t`/`mn2t`) — they are **derived from the ordinary 6-hourly
+`2t`**: for every forecast day the max (`mx2t`) or min (`mn2t`) of the sub-daily
+2t values is taken, on **both** the forecast and the observations, at scoring
+time.
+
+Because they are physically `2t`, everything upstream of the daily
+aggregation is identical to `2t` — retrieval (`param=2t`), GRIB/obs file IO,
+K→°C conversion, lapse-rate correction and 2t quality control all treat
+`mx2t`/`mn2t` exactly as `2t` (via `utils.physical_variable`). Only two things
+differ, both driven by the `variable:` field:
+
+- **Daily aggregation** (`utils.daily_aggregation_method`): `mean` for `2t`,
+  `max` for `mx2t`, `min` for `mn2t`.
+- **Climatology reference**: the `threshold.local_obs_climatology.parameter`
+  must be set to `mx2t`/`mn2t` so the per-station percentiles are read from the
+  matching `clim_mx2t_*` / `clim_mn2t_*` files (daily-max / daily-min obs
+  percentiles), not the daily-mean `clim_2t_*` files.
+
+| `variable` | Aggregation | Clim `parameter` | Typical `event_type` / `percentile` |
+|-----------|-------------|------------------|-------------------------------------|
+| `2t`   | daily mean | `2t`   | `above`/99 (warm) or `below`/1 (cold) |
+| `mx2t` | daily max  | `mx2t` | `above`/99 (warm max extremes) |
+| `mn2t` | daily min  | `mn2t` | `below`/1 (cold min extremes) |
+
+> **Requires sub-daily samples.** Because the daily max/min is taken over the
+> sub-daily 2t values, deterministic `mx2t`/`mn2t` configs **must** use
+> `lead_time_frequency: 6` (so each day has the 06/12/18/24 h samples to
+> aggregate); `lead_time_frequency: 24` would give one value per day and make
+> the max/min meaningless. Ensemble configs already retrieve 6-hourly `steps`,
+> so no change is needed there.
+
+Build the `clim_mx2t_*` / `clim_mn2t_*` climatology files with
+`obs_clim_local/run_mx2tmn2t.sh` (daily max/min of 6-hourly STVL 2t, consistent
+with the forecast aggregation) before running a `local_obs_climatology`
+threshold. MARS availability of the underlying 2t can be checked with
+`check_mx2t_availability.sh`.
+
 ### 24h Precipitation (`tp24`)
 
 - GRIB parameter: `tp` (total precipitation, accumulated from T+0)
@@ -596,6 +650,24 @@ Because both `skip_*_if_exists` flags are `true`, extraction and scoring are ski
 - Observations: 10m instantaneous wind speed (m/s)
 - Typical threshold: p98 (strong winds)
 - `wind_speed_from_components: true` required in `preprocess`
+
+### Daily Max 10m Wind Speed (`mx10ff`)
+
+`mx10ff` verifies the **daily maximum** of the 6-hourly 10 m wind speed, built the
+same way as `mx2t`: it is physically `10ff` (same U/V GRIB, observations, wind QC and
+extraction, via `utils.physical_variable`), and for every forecast day the **max** of
+the sub-daily values is taken on both forecast and observations at scoring time.
+
+- Requires `lead_time_frequency: 6` (the 06/12/18/24 h samples are what is maximised).
+- Set `threshold.local_obs_climatology.parameter: "mx10ff"` so the per-station
+  percentiles come from the daily-max climatology (`clim_mx10ff_*`), not the
+  daily-mean `clim_10ff_*` files. Build them with `obs_clim_local/run_mx10ff.sh`
+  (daily max of 6-hourly STVL 10ff, 2005-2024, 65% availability).
+- An existing `10ff` extraction can be reused: extraction files are named after
+  `variable`, so link the `10ff_*_day{d}.parquet` files as `mx10ff_*_day{d}.parquet`
+  in a separate `output_path` instead of re-extracting.
+- Station ids in climatology files may be non-numeric (e.g. `_1961389`); thresholds
+  are matched to observations by latitude/longitude, so this is harmless.
 
 ### CAMS Atmospheric Composition Variables
 
@@ -1130,16 +1202,32 @@ Retrieves per-station percentiles from the STVL ECMWF observation climatology da
 
 | Score | Config key | Description |
 |-------|-----------|-------------|
-| Equitable Threat Score | `ETS` | Skill relative to random chance; 0 = no skill, 1 = perfect |
-| Peirce Skill Score | `PSS` | POD − POFD; range −1 to 1 |
+| Equitable Threat Score | `ETS` | Skill relative to random chance; 0 = no skill, 1 = perfect. **Degenerates toward 0 for rare events — prefer SEDI for the tail.** |
+| Peirce Skill Score | `PSS` | POD − POFD; range −1 to 1. Also degenerates for rare events. |
+| Symmetric Extremal Dependence Index | `SEDI` | **Recommended categorical score for extremes.** Non-degenerate as the event gets rarer (Ferro & Stephenson 2011); 0 = no skill, 1 = perfect. See bias caveat below. |
+| Extremal Dependence Index | `EDI` | Non-degenerate like SEDI but not symmetric and easier to hedge; reported as a cross-check. Same bias caveat. |
 | Probability of Detection | `POD` | Fraction of observed events that were forecast |
 | False Alarm Ratio | `FAR` | Fraction of forecast events that were false alarms |
-| Threshold-weighted MAE | `twMAE` | MAE weighted to cases where the observation **or** the forecast exceeds the threshold (hits, misses, and false alarms) |
-| Threshold-weighted RMSE | `twRMSE` | RMSE with the same threshold-exceedance weighting as twMAE |
+| Threshold-weighted MAE | `twMAE` | Chaining-function score (Taggart 2022): `mean\|max(fc,T) − max(obs,T)\|` for the upper tail (`min` for the lower). The deterministic analogue of twCRPS; penalises hits, misses **and** false alarms. **Not** the indicator-weighted `1{max≥T}·\|fc−obs\|` — see SCIENCE.md / `docs/TWMAE_HEDGING.md`. |
+| Threshold-weighted RMSE | `twRMSE` | Same chaining construction as twMAE with the squared error; targets the mean rather than the median. |
 | Bias | `bias` | Mean forecast − observation (all cases) |
 | Mean Absolute Error | `mae` | MAE over all cases |
 | Root Mean Square Error | `rmse` | RMSE over all cases |
 | Pearson Correlation | `correlation` | Pearson correlation coefficient between forecast and observation |
+| SEEPS | `SEEPS` | **tp24 only** (skipped with a note for other variables). Stable Equitable Error in Probability Space (Rodwell et al. 2010), ECMWF's headline precipitation score; dry/light/heavy categories, lower = better, ≈1 for a no-skill forecast. Computed over **all** cases (not threshold-masked), using a per-station in-sample climatology; stations with dry probability outside [0.1, 0.85] are dropped. |
+
+> **SEDI/EDI frequency-bias caveat.** EDI and SEDI are base-rate independent *only* when the
+> forecast frequency bias ≈ 1. The forecasts in this tool are **not bias-corrected**, so a
+> SEDI/EDI difference between two models reflects both their discrimination and their frequency
+> bias — read it as a joint statement and cross-check the base-rate columns. SEDI/EDI are
+> undefined (reported as blank/`NaN`) in the degenerate case where a cell has no misses or no
+> false alarms; this does not occur for the large cells of a normal scorecard run. Example config
+> block:
+>
+> ```yaml
+> scores:
+>   deterministic: ["SEDI", "EDI", "ETS", "PSS", "twMAE", "twRMSE", "bias"]
+> ```
 
 Requesting `twMAE` automatically adds six extra columns per condition, decomposing the score into
 its hit / miss / false-alarm contributions (these three sum exactly to `twMAE`):
@@ -1163,29 +1251,148 @@ from frequency and are usually more informative for comparing two models' error 
 |-------|-----------|-------------|
 | Fair CRPS | `fCRPS` | Bias-corrected CRPS; lower = better |
 | Threshold-weighted CRPS | `twCRPS` | CRPS with chaining function focused on extremes |
-| Brier Score | `Brier` | Probability score for the binary extreme event |
+| Brier Score | `Brier` | **Fair** probability score for the binary extreme event: (p̂ − o)² − p̂(1 − p̂)/(M − 1), so ensembles of different size are comparable |
 | Brier Skill Score | `BSS` | Brier score relative to climatological baseline |
+| CRPS Skill Score | `CRPSS` | `1 − CRPS_fc / CRPS_clim`, with the sample climatology of the cell's pooled observations as reference; 1 = perfect, 0 = no better than climatology |
+| Brier reliability | `reliability` | Reliability term of the Brier-score decomposition (Murphy 1973) for P(crossing T), 10 probability bins; 0 = perfectly reliable, lower = better. A pure calibration measure |
 | TW Quantile Score (mean) | `tw_quantile_score` | Mean twQS across all tail levels |
 | TW Quantile Score — level | `tw_quantile_score_q001` etc. | twQS at a specific quantile level (see below) |
-| Extreme Spread/Skill Ratio | `extreme_spread_skill_ratio` | Ensemble spread vs RMSE in the extreme tail |
+| Extreme Spread/Skill Ratio | `extreme_spread_skill_ratio` | Size-corrected √((M+1)/M) · √(mean unbiased variance) / RMSE of the ensemble mean (1 = perfect for any M), **always** restricted to cases where obs crosses the threshold (unconditional on the `extreme_only_basic_scores` flag below). Because it selects on the observed outcome it carries a conditioning bias: treat it as a tail-dispersion diagnostic, not a calibration score |
+| Ensemble Mean Bias | `ens_mean_bias` | Mean(ensemble mean − obs) |
+| Ensemble Mean MAE | `ens_mean_mae` | MAE of the ensemble mean vs obs |
+| Ensemble Mean RMSE | `ens_mean_rmse` | RMSE of the ensemble mean vs obs — the standard "skill" side of the spread–skill relationship (not size-corrected) |
+| Ensemble Mean RMSE, size-corrected | `ens_mean_rmse_fair` | √(MSE − s²/M): the ensemble-mean error expected for an infinite ensemble (Leutbecher & Palmer 2008); use it to compare ensembles of different size |
+| Spread/Skill Ratio | `spread_skill_ratio` | √((M+1)/M) · `ens_spread` / `ens_mean_rmse` on the same cases (all cases): 1 = perfect for any M, < 1 under-, > 1 over-dispersive |
+| Ensemble Spread | `ens_spread` | √(mean over cases of the unbiased member variance, ÷(M−1)) — the standard spread–skill definition, directly comparable with `ens_mean_rmse` |
+
+**Fair and unbiased ensemble scores (finite-ensemble corrections).** With small ensembles (e.g. 8
+members) the plain estimators are biased, so the tool uses:
+
+- `fCRPS`, `twCRPS`: **fair** CRPS (Ferro 2014) — the pairwise term uses M(M−1); the bootstrap and the
+  hit/miss/FA and accuracy/spread decompositions use the same fair form.
+- `Brier` (and therefore `BSS`): **fair** Brier score (p̂ − o)² − p̂(1 − p̂)/(M − 1) for both fixed and
+  per-station thresholds. *(Per-station thresholds used the plain score before 2026-10-15.)*
+- `ens_spread`: √(mean over cases of the **unbiased** member variance, ÷(M−1)) — the standard
+  spread–skill definition (Leutbecher 2009, ECMWF; Fortin et al. 2014), directly comparable with
+  `ens_mean_rmse`. *(Before 2026-10-15 it was the mean of per-case standard deviations ÷M, about 6.5 %
+  low for 8 members.)* For a perfectly calibrated M-member ensemble, RMSE ≈ √((M+1)/M) · spread.
+- `ens_mean_rmse` (the skill/accuracy side) is the plain RMSE of the ensemble mean, as in ECMWF
+  spread–error plots; its expected square is (1 + 1/M)σ², so it is inflated for small ensembles.
+  `ens_mean_rmse_fair` = √(MSE − s²/M) removes that, for comparisons across ensemble sizes.
+- `spread_skill_ratio` (all cases) and `extreme_spread_skill_ratio` (cases where the observation
+  reaches T): **size-corrected** √((M+1)/M) · spread / RMSE, so a statistically consistent ensemble
+  scores 1 for any M (all backends). *(Before 2026-10-15 the extreme ratio had no size factor, so a
+  perfect 8-member ensemble read ≈ 0.94; the general ratio is new.)*
+- `twCRPS_spread`: the fair dispersion term of twCRPS (members chained at T), not a standard deviation.
+
+`reliability` remains the reliability term of the plain Brier decomposition (a calibration diagnostic).
+
+`ens_mean_bias`/`ens_mean_mae`/`ens_mean_rmse`/`ens_spread` are **always computed automatically**
+for ensemble mode — they don't need to be (and can't be) listed under `scores.ensemble`.
+
+By default these four scores (and only these four — `extreme_spread_skill_ratio` is always
+tail-conditioned regardless) are computed over **all** samples, not just the extreme tail. To
+restrict them to cases where the observation crosses the threshold (conditional verification),
+set:
+
+```yaml
+scores:
+  ensemble: [...]
+  extreme_only_basic_scores: true   # default false = computed over all samples
+```
+
+#### Count-based hit / miss / false-alarm fractions (no magnitude)
+
+`count_hits_pct`, `count_misses_pct`, `count_FA_pct` are **always computed automatically** for
+ensemble mode (like `ens_mean_bias` etc. — no config change needed). They answer "how many cases
+fall in each category?", with **zero magnitude weighting** — the exact complement of the
+magnitude-weighted `twCRPS_hits`/`twCRPS_misses`/`twCRPS_FA` decomposition above. The ensemble
+**mean** is used as the single representative forecast value (same basis as `ens_mean_bias`) to
+get a binary "extreme predicted?" decision, compared against the binary observed outcome:
+
+| Column | Meaning |
+|--------|---------|
+| `count_hits_pct` | % of all cases where obs crossed T **and** the ensemble mean also crossed T |
+| `count_misses_pct` | % of all cases where obs crossed T but the ensemble mean did **not** |
+| `count_FA_pct` | % of all cases where the ensemble mean crossed T but obs did **not** |
+
+These three (plus the unreported correct-negative %) sum to 100% of the sample. Comparing them
+against `twCRPS_hits`/`twCRPS_misses`/`twCRPS_FA` on the same condition tells you whether a
+magnitude-weighted difference is driven by *how often* each category occurs or by *how large*
+the error is when it occurs — e.g. for tp24 heavy precip, miss *counts* are usually a small
+fraction of the sample, yet `twCRPS_misses` still dominates the twCRPS budget because each missed
+extreme carries a very large chained-CRPS cost.
+
+#### twCRPS decomposition
+
+Requesting `twCRPS` automatically adds five extra columns per condition, decomposing the score
+in two complementary ways (the probabilistic analogue of the deterministic `twMAE` breakdown).
+Because the forecast is a distribution rather than a single value, the split uses the ensemble
+CDF `F` and the integral form `twCRPS = ∫_T^∞ [F(z) − 1{y ≤ z}]² dz`.
+
+**Hit / miss / false-alarm contributions** (these three sum exactly to `twCRPS`):
+
+| Column | Meaning |
+|--------|---------|
+| `twCRPS_misses` | Underforecast of observed extremes: ensemble probability mass sitting **below** a real extreme (obs ≥ T), i.e. the ensemble is too weak. Contribution `∫_T^y F(z)² dz`. |
+| `twCRPS_hits` | Residual cost at observed extremes from ensemble mass **above** the observation (event captured, upper distribution imperfect). Contribution `∫_y^∞ (1−F(z))² dz` for obs ≥ T. |
+| `twCRPS_FA` | False alarms: ensemble tail probability beyond the threshold when **no** extreme occurred (obs < T). Contribution `∫_T^∞ (1−F(z))² dz`. |
+
+**Accuracy / spread split** (kernel form of the fair CRPS, `twCRPS = accuracy − spread`):
+
+| Column | Meaning |
+|--------|---------|
+| `twCRPS_accuracy` | Ensemble-mean placement term `mean_m \|v(x_m) − v(y)\|` with chaining `v(u)=max(u,T)`; lower = better. |
+| `twCRPS_spread` | Fair dispersion term `(1/(2M(M−1))) ΣΣ \|v(x_m) − v(x_m')\|`. A larger spread term **lowers** twCRPS, so on heatmaps it is coloured like `ens_spread` (higher → better for the typically under-dispersive NWP case). |
+
+The hit/miss/FA columns isolate *where* a model's tail error comes from (under-prediction of real
+extremes vs false alarms); the accuracy/spread columns show *whether* a twCRPS difference is
+driven by ensemble-mean placement or by dispersion. All five are computed for both per-station
+(`local_obs_climatology`) and scalar thresholds and are plotted automatically as heatmaps.
+
+On the `twCRPS_hits`/`twCRPS_misses`/`twCRPS_FA` heatmaps, each cell shows an extra small teal
+annotation in the top-left corner: that component's **% share of the total twCRPS** for that
+cell (the three shares sum to 100%). This makes the dominant failure mode visible on a single
+heatmap — for heavy-tailed variables like `tp24`, `twCRPS_misses` typically carries ~90%+ of the
+budget (under-dispersive ensembles rarely overshoot genuine extremes), so `twCRPS` differences
+between models mostly track `twCRPS_misses`, while `twCRPS_hits`/`twCRPS_FA` differences are much
+smaller in absolute terms even if their own % colour looks large.
 
 #### Threshold-weighted Quantile Score levels
+
+The α levels are chosen **at or beyond** the extreme threshold's own percentile — evaluating a
+quantile forecast at α=0.90 when the event is only "extreme" beyond the 99th percentile mixes in
+a much less extreme, less relevant quantile level. Default (`_TW_QS_ALPHAS` in
+`src/ens_scores.py`) probes progressively deeper into the tail, not toward the distribution's
+centre:
 
 For **cold extremes** (`event_type: below`):
 
 | Key | Alpha | Description |
 |-----|-------|-------------|
-| `tw_quantile_score_q001` | 0.01 | Deepest 1% of the cold tail |
-| `tw_quantile_score_q005` | 0.05 | 5th percentile level |
-| `tw_quantile_score_q010` | 0.10 | 10th percentile level |
+| `tw_quantile_score_q001` | 0.01 | 1st percentile level (matches a p1 threshold) |
+| `tw_quantile_score_q0005` | 0.005 | deeper: 0.5th percentile |
+| `tw_quantile_score_q0001` | 0.001 | deepest: 0.1th percentile |
 
 For **warm/wet extremes** (`event_type: above`):
 
 | Key | Alpha | Description |
 |-----|-------|-------------|
-| `tw_quantile_score_q090` | 0.90 | 90th percentile level |
-| `tw_quantile_score_q095` | 0.95 | 95th percentile level |
-| `tw_quantile_score_q099` | 0.99 | Deepest 99% of the warm tail |
+| `tw_quantile_score_q099` | 0.99 | 99th percentile level (matches a p99 threshold) |
+| `tw_quantile_score_q0995` | 0.995 | deeper: 99.5th percentile |
+| `tw_quantile_score_q0999` | 0.999 | deepest: 99.9th percentile |
+
+Column-name format: alphas that are exact multiples of 0.01 use the legacy 2-decimal code
+(`q090`, `q099`, `q001`, ...); finer alphas get a 4-digit code (`q0995`, `q0001`, ...) that cannot
+collide with any 2-decimal code. Configs can still override the default via `scores.tw_qs_alphas`
+(e.g. the 10ff p98 configs use `above: [0.90, 0.95, 0.98]` to stay within their own p98 threshold)
+— those keep their existing `q090`/`q095`/`q098` columns until deliberately migrated.
+
+> **Migration note (2026-09):** the default alphas changed from `[0.90, 0.95, 0.99]` /
+> `[0.01, 0.05, 0.10]` to the deeper-tail levels above. Configs that list the old column names
+> explicitly (`tw_quantile_score_q090`/`q095`, `tw_quantile_score_q005`/`q010`) keep producing
+> those exact columns until the config is edited and rescored — `src/plot.py` still recognises
+> both the legacy and current column names so old results keep plotting correctly.
 
 ---
 
@@ -1215,13 +1422,42 @@ Classified by `sdfor` — the **sub-grid standard deviation of orography** (in m
 
 ### Coastal station removal
 
-Stations with `lsm < coastal_lsm_threshold` (default 0.9) are considered coastal and removed. The LSM value is interpolated from each model's own land-sea mask field to avoid model-dependency.
+Stations with `lsm < coastal_lsm_threshold` (default 0.9) are considered coastal and removed. With the
+`quaver_extract` backend a single common land-sea mask (IFS static analysis) is interpolated to the
+stations, so both models are filtered identically.
+
+> **Ensemble runs before 2026-10-15:** the streaming ensemble scoring path did not apply
+> `remove_coastal_stations` (nor `filter.area`, below) — ensemble scorecards kept coastal stations even
+> when configured to remove them. Both filters are now applied in the deterministic and the ensemble
+> path; re-score older ensemble results (no re-extraction needed) to make them consistent.
+
+### Region (`filter.area`)
+
+`extract_points.area` limits the **extraction** to a box. `filter.area` selects a region **after**
+extraction, from data extracted over a larger box — it only acts when `extract_points.area` is `null`
+(otherwise the data are already cut and the setting is ignored with a warning). This allows one
+expensive extraction to be scored for several regions:
+
+| Named area | Box [N, W, S, E] |
+|------------|------------------|
+| `europe` | 68, −15, 27, 50 |
+| `france` | 51.5, −5.5, 42, 8.5 (filter only) |
+| `nh_extratropics` | 90, −180, 20, 180 |
+| `tropics` | 20, −180, −20, 180 |
+| `nh_extratropics_tropics` | 90, −180, −20, 180 (extract once, then split) |
+
+Pattern: extract with `extract_points.area: nh_extratropics_tropics`, then score two configs that point
+at the same `output_path` with `extract_points.area: null` and `filter.area: nh_extratropics` (with an
+orography split) / `filter.area: tropics` (e.g. `orography_type: null`). `scripts/plot_combined_regions.py`
+draws both as one scorecard (§12). Note that tropical regions have far fewer stations with a usable
+20-year obs climatology, so `local_obs_climatology` thresholds rest on a thinner sample there.
 
 ### Quality control
 
 - **Temperature**: obs outside `[min_valid_temperature, max_valid_temperature]` (°C) are removed.
 - **Precipitation**: obs above `max_valid_precipitation` (mm) are removed.
-- **Outlier sigma clipping**: when `remove_outliers: true`, pairs where `|obs − mean| > outlier_threshold_std × std` are removed.
+
+> **Note:** Gaussian mean±N·std outlier ("sigma clipping") removal has been removed from the pipeline. It is statistically invalid for skewed fields such as `tp24`, where it strips the genuine extreme tail being verified. Only the physical-validity caps above are applied.
 
 ---
 
@@ -1258,15 +1494,26 @@ The **heatmap color/annotation** shown in the PNGs is computed separately at plo
 stored in the CSV) and is a percentage, normalized differently depending on the score type —
 and the color convention flips between the two groups:
 
-- Error-type scores (`twMAE`, `twRMSE`, `mae`, `rmse`, `bias`, the twMAE decomposition columns,
-  `CRPS`, `twCRPS`, `tw_quantile_score`, `diagonal_score`, `ens_mean_*`, `Brier`) and
-  "higher-is-better" scores (`ens_spread`, `extreme_spread_skill_ratio`):
+- Error-type scores (`twMAE`, `twRMSE`, `mae`, `rmse`, `SEEPS`, the twMAE decomposition columns,
+  `CRPS`, `twCRPS`, the `twCRPS_hits`/`_misses`/`_FA`/`_accuracy` decomposition columns,
+  `count_misses_pct`, `count_FA_pct`, `tw_quantile_score`, `diagonal_score`, `ens_mean_mae`,
+  `ens_mean_rmse`) and bounded error scores with perfect = 0 (`Brier`, `reliability`, `FAR`):
   `pct_diff = (fc2 − fc1) / fc1 × 100`.
-  Lower error is better here, so **negative = model2 (fc2) better, shown blue; positive =
-  model1 (fc1) better, shown red.**
-- Bounded skill scores (`ETS`, `PSS`, `POD`, `FAR`, etc.): `pct_diff = (fc2 − fc1) / (1 − fc1) × 100`
-  (skill-score-style normalization against the remaining headroom to a perfect score of 1).
-  Higher skill is better here, so **positive = model2 (fc2) better, shown blue; negative =
+  Lower is better, so **negative = model2 (fc2) better, shown blue; positive = model1 (fc1)
+  better, shown red.**
+- Signed, zero-crossing scores (`bias`, `ens_mean_bias`): a relative % of a quantity whose target
+  is 0 is meaningless (it explodes near zero bias and flips sign when fc1 < 0), so these show the
+  **reduction in |bias|**: `pct_diff = (|fc1| − |fc2|) / max(|fc1|, |fc2|) × 100`, bounded to
+  ±100. **Positive = model2 has the smaller |bias|, shown blue.**
+- Spread–skill ratios (`spread_skill_ratio`, `extreme_spread_skill_ratio`), perfect = 1: shown as
+  **closeness to 1**, the same transform applied to (ratio − 1). **Positive = model2 is closer to
+  1, shown blue** — so too much spread is not rewarded.
+- "Higher-is-better" scores without a perfect value of 1 (`ens_spread`,
+  `twCRPS_spread`, `count_hits_pct`):
+  `pct_diff = (fc2 − fc1) / fc1 × 100`, **positive = model2 better, shown blue.**
+- Skill scores with perfect = 1 (`ETS`, `PSS`, `SEDI`, `EDI`, `POD`, `BSS`, `CRPSS`,
+  `correlation`): `pct_diff = (fc2 − fc1) / (1 − fc1) × 100` (normalised by the remaining
+  headroom to a perfect score). **Positive = model2 (fc2) better, shown blue; negative =
   model1 (fc1) better, shown red.**
 
 ---
@@ -1294,6 +1541,10 @@ model** from whatever `fc{1,2}_member_*` columns that model actually has, so
 e.g. a 51-member ensemble (control + 50 perturbed) can be compared directly
 against a 50-member one (perturbed only, no archived control) — nothing
 needs to be padded or truncated to match.
+
+For ensembles made only of perturbed members (e.g. an 8-member `rd` experiment with no control
+anywhere), the simplest setup is `ensemble: {n_members: 8, include_control: false}` with
+`number: "1/to/8"` for both models — no control is requested at all.
 
 When a model has no archived control member (common for research/`rd`
 experiments), configure how to handle it per model under its `mars:` (method
@@ -1402,17 +1653,17 @@ sbatch obs_clim_local_Italy/run.sh
 
 ## 13. Diagnostic and Analysis Tools
 
-### `diagnostics/diagnose_extremes.py` — Comprehensive single-condition diagnostics
+### `diagnostics/deterministic/diagnose_extremes.py` — Comprehensive single-condition diagnostics
 
 Produces **22 diagnostic plots** for a specific (day, season, orography, threshold) combination. Reads from the extracted parquet files; the main pipeline must have completed through Step 3 first.
 
 ```bash
-python diagnostics/diagnose_extremes.py \
+python diagnostics/deterministic/diagnose_extremes.py \
   --config configs/deterministic/config_2t_local_p1obsclim.yaml \
   --day 3 --threshold-pct 1 --season DJF --orog complex
 
 # Or with a fixed threshold value:
-python diagnostics/diagnose_extremes.py \
+python diagnostics/deterministic/diagnose_extremes.py \
   --config configs/deterministic/config_tp24_local_p99obs.yaml \
   --day 3 --threshold-value 30.0 --season JJA --orog flat
 
@@ -1450,12 +1701,12 @@ sbatch scripts/submit_diagnose.sh --config configs/deterministic/config_2t_local
 
 Output goes to `{save.output_directory}/day{N}_pct{P}_{SEASON}_{OROG}/`.
 
-### `diagnostics/diagnose_det_extremes_simple.py` — Quick deterministic diagnostic
+### `diagnostics/deterministic/diagnose_det_extremes_simple.py` — Quick deterministic diagnostic
 
 A lightweight 3-row figure for a fast visual check; does not require the full score CSV.
 
 ```bash
-python diagnostics/diagnose_det_extremes_simple.py \
+python diagnostics/deterministic/diagnose_det_extremes_simple.py \
   --config configs/deterministic/config_2t_local_p99obsclim_aifs_ifs_single.yaml \
   --orog flat --days 1 3 --season JJA
 ```
@@ -1467,12 +1718,12 @@ python diagnostics/diagnose_det_extremes_simple.py \
 
 Pools data across the requested forecast days. Output PNG saved to `{save.output_directory}/`.
 
-### `diagnostics/diagnose_twcrps_simple.py` — Quick ensemble diagnostic
+### `diagnostics/ensemble/diagnose_twcrps_simple.py` — Quick ensemble diagnostic
 
-Ensemble counterpart of `diagnostics/diagnose_det_extremes_simple.py`; replicates the pipeline's 6-hourly → daily aggregation internally.
+Ensemble counterpart of `diagnostics/deterministic/diagnose_det_extremes_simple.py`; replicates the pipeline's 6-hourly → daily aggregation internally.
 
 ```bash
-python diagnostics/diagnose_twcrps_simple.py \
+python diagnostics/ensemble/diagnose_twcrps_simple.py \
   --config configs/ensemble/config_2t_ens_local_p99obsclim_aifsvsifs.yaml \
   --orog low --day 5
 ```
@@ -1484,10 +1735,43 @@ python diagnostics/diagnose_twcrps_simple.py \
 
 Output PNG saved to `{save.output_directory}/`.
 
-### `diagnostics/plot_qq_extremes.py` — Q-Q plot (warm + cold + cold-zoom panels)
+### `diagnostics/ensemble/diagnose_ens_extremes.py` — Comprehensive ensemble diagnostics (twCRPS vs quantile score)
+
+Probabilistic counterpart of `diagnostics/deterministic/diagnose_extremes.py`. Built specifically to explain **why the threshold-weighted CRPS (`twCRPS`) and the threshold-weighted quantile score (`tw_quantile_score`) can rank two ensembles differently**. It reproduces the pipeline's *exact* ensemble scoring path (Step 5 threshold on sub-daily data → Step 5b daily aggregation → `ens_scores.calculate_ensemble_scores`), so every number matches the heatmap CSV for the corresponding `(season, orography, forecast_day)` cell. The multi-GB per-day parquet is read in chunks to stay within memory.
 
 ```bash
-python diagnostics/plot_qq_extremes.py \
+python diagnostics/ensemble/diagnose_ens_extremes.py \
+  --config configs/ensemble/config_2t_ens_local_p99obsclim_aifsvsifs.yaml \
+  --day 5 --season JJA --orog low
+```
+
+Arguments: `--config` (required), `--day` (default 5), `--season` (default JJA), `--orog` (default low), `--output-dir` (default `case_study_output/ens_diagnostics/<config stem>`). The `event_type` (warm/cold) is taken from the config.
+
+**Why twCRPS and the quantile score can disagree even though both use the same tail:**
+The identity `twCRPS = 2·∫₀¹ twQS(α) dα` (Gneiting & Ranjan, 2011) means twCRPS is the
+continuous integral of the pinball loss over *every* quantile level α, while the reported
+`tw_quantile_score` is the mean of only 3 discrete levels (α = 0.99/0.995/0.999 by default,
+i.e. at-or-beyond the extreme threshold's own percentile — see "Threshold-weighted Quantile
+Score levels" above). If a model's tail performance is not uniform across α — e.g. better
+mid-tail but worse at the single deepest quantile — the two `twQS(α)` curves cross, and the
+full-integral score (twCRPS) and the 3-point summary (twQS) can pick different winners.
+
+**Figure 1 — `ens_score_attribution_*.png`** (six panels):
+1. Forecast vs observed CDF in the tail — shows exactly what `twCRPS = ∫[F(z)−1{obs≤z}]²dz` integrates over (shaded region, z ≥ T).
+2. Quantile-coverage curve — is each tail quantile `q̂_α` calibrated (curve below the 1:1 line at α → that quantile is forecast too low)?
+3. `twQS(α)` swept across most of the [0,1] quantile axis (α∈[0.5,0.999] for warm / [0.001,0.5] for cold), with the 3 reported levels marked — the shared quantity behind both scores. `twCRPS = 2·∫₀¹twQS(α)dα` holds over the *full* [0,1] domain; the plotted partial-domain area is an illustrative check only (the boxed numbers state whether its winner agrees with the exact twCRPS). A disagreement between twCRPS and twQS means the two models' `twQS(α)` curves cross somewhere in α.
+4. twCRPS split by daily outcome at the threshold (hit / miss / false alarm; edge colour = model).
+5. Head-to-head `%` difference, one row per score (twCRPS, twQS mean, twQS at each level) — a sign flip down the list means the scores disagree.
+6. Auto-generated attribution summary: states the `twCRPS = 2·∫twQS dα` identity, the winner of each score, the coverage read-out, the spread-skill ratio, and bootstrap-significant differences.
+
+**Figure 2 — `ens_calibration_*.png`** (three panels): rank (Talagrand) histogram (U-shape → under-dispersive), spread–skill diagram (above 1:1 → under-dispersive/over-confident), and reliability diagram for `P(exceed T)` annotated with BSS.
+
+> Memory note: the ensemble scoring path deliberately does **not** apply the coastal (`lsm`) filter and thresholds *before* daily aggregation — this tool matches that exactly. Running it as a plain command on a login node is fine (chunked reads keep it under the memory cap).
+
+### `diagnostics/qq/plot_qq_extremes.py` — Q-Q plot (warm + cold + cold-zoom panels)
+
+```bash
+python diagnostics/qq/plot_qq_extremes.py \
   --config configs/deterministic/config_2t_local_p1obsclim.yaml \
   --day 3 --season DJF --orog complex
 ```
@@ -1497,30 +1781,59 @@ Three-panel figure:
 - **Panel B**: Cold extremes overview (p0.1–p10), same marker scheme
 - **Panel C**: Cold extremes zoom — connected line from p10 to p0.1, every 1% down to p1 then every 0.1%
 
-### `diagnostics/plot_qq.py` — General Q-Q plot
+### `diagnostics/qq/plot_qq.py` — General Q-Q plot
 
 ```bash
-python diagnostics/plot_qq.py --config configs/deterministic/config_tp24_precipitation.yaml \
+python diagnostics/qq/plot_qq.py --config configs/deterministic/config_tp24_precipitation.yaml \
   --season DJF MAM JJA SON --orog flat mid high
 ```
 
-### `diagnostics/plot_station_diagnostics.py` — Per-station spatial maps
+### `diagnostics/stations/plot_station_diagnostics.py` — Per-station spatial maps
 
 Takes the **extracted points directory** as a positional argument (not a config file). Forecast mode (deterministic vs ensemble) is auto-detected from the parquet column names. Produces scatter maps on a European map with station dots coloured by bias, error, or threshold-exceedance class.
 
 ```bash
 # Ensemble parquet in /extracted_points/2t_ens:
-python diagnostics/plot_station_diagnostics.py ./extracted_points/2t_ens \
+python diagnostics/stations/plot_station_diagnostics.py ./extracted_points/2t_ens \
   --threshold 30 --event-type above --variable 2t \
   --forecast-day 3 --model1-name ifs_ens --model2-name aifs_ens \
   --output-dir ./plots/station_diagnostics/2t_warm
 
 # Deterministic:
-python diagnostics/plot_station_diagnostics.py ./extracted_points/2t \
+python diagnostics/stations/plot_station_diagnostics.py ./extracted_points/2t \
   --threshold -5 --event-type below --variable 2t \
   --forecast-day 3 --model1-name ifs_oper --model2-name iekm \
   --output-dir ./plots/station_diagnostics/2t_cold
 ```
+
+### `scripts/plot_combined_regions.py` — NH-orography + tropics in one scorecard
+
+```bash
+python scripts/plot_combined_regions.py <nh_config.yaml> <tropics_config.yaml> <output_dir>
+```
+
+Reads the `scores_by_leadtime` CSVs of an NH-extratropics run (orography split) and a tropics run
+(unsplit) that share one extraction (§8, *Region*), and redraws every score as one heatmap with columns
+NH FLAT | NH HILLY | NH COMPLEX | TROPICS through the normal plotting code (same colours, limits and
+significance boxes).
+
+### `scripts/plot_ocean_twcrps_panels.py` and `scripts/plot_ocean_ranking_summary.py` — multi-experiment views
+
+```bash
+python scripts/plot_ocean_twcrps_panels.py   [--score twCRPS|Brier|fCRPS|…] [output_dir]
+python scripts/plot_ocean_ranking_summary.py [--score twCRPS|Brier|…]       [output_dir]
+```
+
+Written for the ocean-coupling ensemble study (Control vs Ocean A/B, GT, T; configs from
+`scripts/make_ocean_ens_configs.py`), but the pattern generalises:
+- **Panels**: one figure per variable with the four experiment scorecards side by side
+  (NH FLAT | HILLY | COMPLEX | TROPICS × day 1–10), a fixed −30…+30 % colour bar, blue = experiment better
+  than the reference, boxed = significant. Lower-is-better scores only.
+- **Ranking summary**: (1) significantly better/worse cell counts, mean % change and mean rank per
+  experiment; (2) mean % change per variable × experiment with the better/worse counts in each cell.
+  Significance is always *vs the reference*; experiments are not tested against each other.
+
+Default output: `plots/ocean_ens_FebAug2026/`.
 
 ### Case-study tools (`case_studies/`)
 
@@ -1651,14 +1964,50 @@ The pipeline supports **incremental restart** without re-doing already completed
 - **Extraction** (`skip_extraction_if_exists: false`): Per-date progress is cached in `_tmp/`. On resubmission, already-extracted dates are skipped automatically.
 - **Scoring** (`skip_scoring_if_exists: true`): If score CSVs already exist, the scoring step is skipped entirely.
 
+### Chunked extraction and automatic merge + scoring
+
+`quaver_extract` processes dates serially, so long periods are split into date chunks that run as
+parallel jobs, then merged and scored automatically:
+
+```bash
+python scripts/chunk_extraction.py split configs/.../my_config.yaml --n-chunks 4 --submit
+sbatch scripts/watch_and_score.sh configs/.../my_config.yaml 4 [extra_config.yaml ...]
+```
+
+- Chunk configs go to `configs/_chunks/<config name>/` (git-ignored), each with `extraction_only: true`
+  and its own `<output_path>_chunkN`; `job_ids.txt` lists their jobs.
+- `watch_and_score.sh` waits for the chunk jobs, resubmits incomplete chunks (they resume from their
+  per-date `_tmp` cache), then submits one 128 GB job that merges the chunks
+  (`chunk_extraction.py merge`) and scores the base config.
+- **Extra configs** (optional arguments) are further scoring runs over the *same* merged extraction —
+  e.g. a `filter.area: tropics` config next to an NH one. They are submitted with
+  `--dependency=afterany:<merge+score job>` and `S4E_REQUIRE_EXTRACTED=1`.
+- **`S4E_POST_SCRIPT=<batch script>`** (exported to the watcher) is submitted after all scoring jobs,
+  e.g. a combined-region plot.
+- **Guard:** with `S4E_REQUIRE_EXTRACTED=1`, `submit_job_quaver.sh` runs `scripts/check_extracted.py`
+  first and refuses to start (exit 3, no auto-retry) if any expected `*_day<N>.parquet` is missing —
+  otherwise `run.py` would silently re-extract from scratch.
+- **A model whose archive changes during the period** (e.g. a research expver until some date, then the
+  operational stream): write the chunk configs by hand so each chunk carries the right
+  `read_data.forecast_modelN.quaver` identity and `unit_conversion_factor` (e.g. tp in m → ×1000 vs
+  kg m⁻² → ×1), keeping the same model `name` so the chunks merge. Example:
+  `configs/deterministic/config_*_aifsv2vsjbxy_FebAug2026*.yaml`.
+
+> **Exit code 139 after "Extraction complete":** `quaver_extract` jobs often segfault while Python is
+> shutting down, *after* writing all day files. SLURM then reports FAILED and `submit_job_quaver.sh`
+> auto-resubmits; the resubmitted job finds the files and exits cleanly within a minute. Check the log
+> for "extraction complete" before treating such a job as failed.
+
 ### Specialist submission scripts
 
 | Script | Purpose | Resources |
 |--------|---------|----------|
 | `scripts/submit_job.sh` | Main pipeline (extract + score + plot) | 128 GB, 12 CPU, 48 h |
-| `scripts/submit_qq.sh` | Q-Q plot tool (`diagnostics/plot_qq.py`) | 64 GB, 1 CPU, 1 h |
-| `scripts/submit_diagnose.sh` | `diagnostics/diagnose_extremes.py` (simple wrapper, passes all args through) | 32 GB, 1 CPU, 2 h |
-| `scripts/submit_diagnose_job.sh` | `diagnostics/diagnose_extremes.py` (race-condition-safe multi-job helper) | 64 GB, 4 CPU, 4 h |
+| `scripts/submit_job_quaver.sh` | Same, with the vtb/quaver environment; honours `S4E_MERGE_CHUNKS`, `S4E_REQUIRE_EXTRACTED`, auto-retry | 128 GB, 12 CPU, 48 h |
+| `scripts/watch_and_score.sh` | Chunk watcher → merge + score (+ extra configs, `S4E_POST_SCRIPT`) | 1 GB, 1 CPU, 48 h |
+| `scripts/submit_qq.sh` | Q-Q plot tool (`diagnostics/qq/plot_qq.py`) | 64 GB, 1 CPU, 1 h |
+| `scripts/submit_diagnose.sh` | `diagnostics/deterministic/diagnose_extremes.py` (simple wrapper, passes all args through) | 32 GB, 1 CPU, 2 h |
+| `scripts/submit_diagnose_job.sh` | `diagnostics/deterministic/diagnose_extremes.py` (race-condition-safe multi-job helper) | 64 GB, 4 CPU, 4 h |
 | `scripts/submit_extraction.sh` | tp24 obs extraction from STVL | 64 GB, 4 CPU, 12 h |
 | `case_studies/submit_find_cases.sh` | `find_case_studies.py` via `--export` env vars | 64 GB, 1 CPU, 4 h |
 | `case_studies/submit_plot_case.sh` | `plot_case_study.py` via `--export` env vars | 32 GB, 1 CPU, 1 h |

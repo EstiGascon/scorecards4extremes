@@ -18,7 +18,7 @@ echo ""
 module load ecmwf-toolbox/new
 module load python3
 
-python3 analysis/build_tp24_climatology.py
+python3 diagnostics/climatology/build_tp24_climatology.py
 
 echo ""
 echo "End time: $(date)"

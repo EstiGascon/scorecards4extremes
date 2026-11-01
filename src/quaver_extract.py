@@ -61,6 +61,7 @@ from mars_retrieve import _ens_control_stream_type
 # Single source of truth for forecast steps — shared with the local extractor
 # and MARS retrieval, so all three backends look at identical lead times.
 from utils import compute_steps
+from utils import physical_variable
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +149,8 @@ def _retrieve_one_day_param(config, model_key, date, steps, param):
     )
     if q.get('grid'):
         mars_kw['grid'] = q['grid']
+    if q.get('interpolation'):
+        mars_kw['interpolation'] = q['interpolation']
     if q.get('number'):
         mars_kw['number'] = q['number']
     return vtb.media.mars_retrieve(**mars_kw)
@@ -205,6 +208,8 @@ def _retrieve_orog_for_model(config, model_key, static_mars_kw, local_path):
                 kw['model'] = q['model']    # e.g. 'aifs-ens' for AIFS (class=ai)
             if q.get('grid'):
                 kw['grid'] = q['grid']
+            if q.get('interpolation'):
+                kw['interpolation'] = q['interpolation']
             fs = vtb.media.mars_retrieve(**kw)
             if fs is not None and len(fs) > 0:
                 print(f"    → orog [{model_key}] retrieved from MARS "
@@ -305,7 +310,7 @@ def _extract_one_date(config, date, step_hours, accum_hours,
     param = '10ff' if is_wind else _variable_to_param(variable)
     q_obs = config['read_data'].get('quaver_obs', {})
     sources = q_obs.get('sources', ['synop'])
-    is_temperature = (variable == '2t')
+    is_temperature = (physical_variable(variable) == '2t')
     step_to_day_map = step_to_day_map or {}
 
     # Forecast steps to actually retrieve (include the (step - accum) steps for
@@ -653,6 +658,8 @@ def _retrieve_ensemble_one_day_param(config, model_key, date, steps, param,
             mars_kw['model'] = control_source['model']
         if control_source.get('grid', q.get('grid')):
             mars_kw['grid'] = control_source.get('grid', q.get('grid'))
+        if control_source.get('interpolation', q.get('interpolation')):
+            mars_kw['interpolation'] = control_source.get('interpolation', q.get('interpolation'))
         return vtb.media.mars_retrieve(**mars_kw)
 
     mars_kw = dict(
@@ -675,6 +682,8 @@ def _retrieve_ensemble_one_day_param(config, model_key, date, steps, param,
         mars_kw['model'] = q['model']       # e.g. 'aifs-ens' for AIFS (class=ai)
     if q.get('grid'):
         mars_kw['grid'] = q['grid']
+    if q.get('interpolation'):
+        mars_kw['interpolation'] = q['interpolation']
     return vtb.media.mars_retrieve(**mars_kw)
 
 
@@ -757,7 +766,7 @@ def _extract_one_date_ensemble(config, date, step_hours, accum_hours,
     vtb, _ = _load_vtb()
     variable = config['variable']
     is_wind = (variable == '10ff')
-    is_temperature = (variable == '2t')
+    is_temperature = (physical_variable(variable) == '2t')
     # 10ff is retrieved as raw 10u/10v components (the derived '10si' diagnostic
     # isn't archived for research streams); STVL obs are requested as '10ff'.
     param = '10ff' if is_wind else _variable_to_param(variable)

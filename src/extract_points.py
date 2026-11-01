@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from utils import format_threshold_string as _format_threshold_string
 from utils import compute_steps as _compute_steps
+from utils import physical_variable as _physical_variable
 
 
 def get_area_bbox(area_config):
@@ -32,6 +33,8 @@ def get_area_bbox(area_config):
         'europe': [68, -15, 27, 50],
         'nh_extratropics': [90, -180, 20, 180],
         'tropics': [20, -180, -20, 180],
+        # NH extratropics + tropics in one extraction (20S-90N); split later via filter.area
+        'nh_extratropics_tropics': [90, -180, -20, 180],
         'north_america': [72, -170, 20, -50],
         'asia': [75, 50, 10, 150]
     }
@@ -103,6 +106,11 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
     obs_path = Path(obs_path)
     output_path = Path(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
+
+    # Physical field for retrieval/IO/physics. mx2t/mn2t are derived from 2t so
+    # they read 2t GRIB/obs, convert K->C and lapse-correct exactly like 2t;
+    # the daily max/min aggregation happens later at scoring time.
+    pvar = _physical_variable(variable)
     
     start_dt = datetime.strptime(start_date, '%Y-%m-%d')
     end_dt = datetime.strptime(end_date, '%Y-%m-%d')
@@ -125,7 +133,7 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
     # Each model can have its own orography/lsm
     height_field_fc1 = None
     height_field_fc2 = None
-    if variable == '2t' and preprocess_settings.get('lapse_rate_correction', False):
+    if pvar == '2t' and preprocess_settings.get('lapse_rate_correction', False):
         try:
             # Model 1 height field
             lsm_path_fc1 = cfg_aux.get('model1', {}).get('lsm_path', cfg_aux.get('lsm_path', '/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib'))
@@ -218,7 +226,7 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
         fc2_grib = None
         
         try:
-            if variable == '2t':
+            if pvar == '2t':
                 # Model 1
                 fc1_grib_file = fc1_path / f"2t_{date_str}.grib"
                 if fc1_grib_file.exists():
@@ -235,7 +243,7 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                 else:
                     print(f"    ✗ Missing {fc2_name} GRIB")
             
-            elif variable == '10ff':
+            elif pvar == '10ff':
                 # Clear wind component locals from previous date to avoid stale data
                 fc1_u_grib = None
                 fc1_v_grib = None
@@ -339,13 +347,13 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                 fc1_step = None
                 fc2_step = None
                 
-                if variable == '2t':
+                if pvar == '2t':
                     if fc1_grib is not None:
                         fc1_step = mv.read(data=fc1_grib, step=step) - 273.15  # Convert to Celsius
                     if fc2_grib is not None:
                         fc2_step = mv.read(data=fc2_grib, step=step) - 273.15  # Convert to Celsius
                 
-                elif variable == '10ff':
+                elif pvar == '10ff':
                     # Use pre-loaded wind component GRIBs
                     if fc1_u_grib is not None and fc1_v_grib is not None:
                         u1_step = mv.read(data=fc1_u_grib, step=step)
@@ -408,7 +416,7 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                 vtime_str = valid_dt.strftime('%H')
                 
                 # Observation file format: 2t_obs_YYYYMMDDHH.geo
-                obs_file = obs_path / f"{variable}_obs_{vdate_str}{vtime_str}.geo"
+                obs_file = obs_path / f"{pvar}_obs_{vdate_str}{vtime_str}.geo"
                 if iteration == 1:
                     print(f"    Looking for obs: {obs_file}")
                     print(f"    Obs exists: {obs_file.exists()}")
@@ -425,7 +433,7 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                 obs = mv.remove_duplicates(obs)
                 
                 # Convert observations from Kelvin to Celsius for 2t
-                if variable == '2t':
+                if pvar == '2t':
                     obs = obs - 273.15
                 
                 if iteration == 1:
@@ -468,7 +476,7 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                     # Do NOT parse the text file for elevations — mv.read() reorders stations
                     # internally, so text-file order != Metview object order.
                     obs_heights = [0.0] * len(lats)
-                    if variable == '2t' and preprocess_settings.get('lapse_rate_correction', False):
+                    if pvar == '2t' and preprocess_settings.get('lapse_rate_correction', False):
                         try:
                             obs_heights_raw = mv.elevations(obs)
                             obs_heights = list(obs_heights_raw)
@@ -512,7 +520,7 @@ def extract_points(config, variable, fc1_path, fc2_path, fc1_name, fc2_name, obs
                     fc2_heights = [0.0] * len(lats)
                     fc1_vals_uncorrected = list(fc1_vals)
                     fc2_vals_uncorrected = list(fc2_vals)
-                    if variable == '2t' and (height_field_fc1 is not None or height_field_fc2 is not None):
+                    if pvar == '2t' and (height_field_fc1 is not None or height_field_fc2 is not None):
                         lapse_rate = preprocess_settings.get('lapse_rate', -0.0065)
                         
                         # Get model heights at observation points

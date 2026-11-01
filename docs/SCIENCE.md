@@ -110,11 +110,48 @@ $$\text{PSS} = \text{POD} - \text{POFD} = \frac{H}{H+M} - \frac{F}{F+Z}$$
 
 where POFD is the probability of false detection. Range: [−1, 1]. 0 = no skill. Perfect: 1.
 
+> **Degeneracy for rare events.** ETS, PSS, POD and CSI all tend to trivial values as the event
+> base rate $\to 0$ (Stephenson et al. 2008; Ferro & Stephenson 2011), i.e. exactly the p99–p99.9
+> regime this tool targets — two systems of equal underlying skill score progressively *lower*
+> ETS/PSS as the threshold is pushed further into the tail. The extremal-dependence indices below
+> were designed to remove this.
+
+### Extremal Dependence Index (EDI) and Symmetric EDI (SEDI)
+
+With the hit rate $H = \text{POD} = \tfrac{H}{H+M}$ and the false-alarm rate $F = \text{POFD} = \tfrac{F}{F+Z}$:
+
+$$\text{EDI} = \frac{\ln F - \ln H}{\ln F + \ln H}, \qquad
+\text{SEDI} = \frac{\ln F - \ln H - \ln(1-F) + \ln(1-H)}{\ln F + \ln H + \ln(1-F) + \ln(1-H)}.$$
+
+Both are **non-degenerate** as the base rate $\to 0$ (asymptotically independent of base rate),
+so SEDI is the recommended categorical score for extremes. SEDI is additionally symmetric under
+exchanging events with non-events and is harder to hedge than EDI. Range $(-1, 1]$; $0$ = no skill,
+$1$ = perfect. They are undefined at the margins ($H$ or $F$ equal to $0$ or $1$) and return `NaN`
+there — this does not occur in practice for the large multi-thousand-sample cells of the scorecard.
+
+> **Frequency-bias caveat (important here).** EDI/SEDI are base-rate independent only when the
+> forecast frequency bias $B = (H{+}F)/(H{+}M) \approx 1$. **The forecasts in this tool are not
+> bias-corrected**, so a SEDI/EDI *difference* between two models conflates differences in their
+> discrimination with differences in their frequency bias. Interpret it as a joint statement and
+> cross-check against the base-rate / frequency-bias information. Reference: Ferro & Stephenson (2011).
+
 ### Threshold-weighted MAE
 
-$$\text{twMAE} = \frac{1}{N} \sum_{i=1}^{N} w(y_i, \hat{y}_i) \cdot |y_i - \hat{y}_i|$$
+twMAE is the **chaining-function** (consistent) scoring function of Taggart (2022), i.e. the
+deterministic / single-valued analogue of the twCRPS. The chaining function $v_T$ is applied to
+**both** the forecast and the observation before the absolute error is taken:
 
-where the weight $w(y_i, \hat{y}_i) = 1$ if $\max(y_i, \hat{y}_i) \geq T$ (i.e. at least one of obs or forecast exceeds the threshold), and 0 otherwise. This concentrates the error on cases where either the observation or the forecast qualifies as an extreme event.
+$$\text{twMAE} = \frac{1}{N} \sum_{i=1}^{N} \left| v_T(\hat{y}_i) - v_T(y_i) \right|, \qquad
+v_T(x) = \begin{cases} \max(x, T) & \text{above-threshold (warm/wet/windy)} \\ \min(x, T) & \text{below-threshold (cold)} \end{cases}$$
+
+Equivalently $v_T(x)=(x-T)_+ + T$, so for the upper tail $\left|v_T(\hat y)-v_T(y)\right| = \left|(\hat y-T)_+ - (y-T)_+\right|$ (the additive constant $T$ cancels).
+
+> **This is *not* the indicator-weighted MAE** $\frac{1}{N}\sum \mathbf{1}\{\max(y,\hat y)\ge T\}\,|y-\hat y|$.
+> The two agree on hits but differ on misses and false alarms, and only the chaining version
+> above is a *consistent* (non-hedgeable) scoring function for the threshold-weighted median
+> (Taggart 2022). Because $v_T$ is applied to the forecast as well as the observation, false
+> alarms (forecast beyond $T$, observation not) are penalised — this is what makes twMAE
+> impossible to improve by over-forecasting (see `docs/TWMAE_HEDGING.md`).
 
 ### Decomposition of twMAE
 
@@ -128,9 +165,33 @@ $$\text{twMAE} = \frac{H \cdot \overline{e}_H + M \cdot \overline{e}_M + F \cdot
 
 ### Threshold-weighted RMSE
 
-$$\text{twRMSE} = \sqrt{\frac{1}{N} \sum_{i=1}^{N} w(y_i, \hat{y}_i) \cdot (y_i - \hat{y}_i)^2}$$
+Same chaining construction as twMAE, with the squared error:
 
-with the same weight function as twMAE.
+$$\text{twRMSE} = \sqrt{\frac{1}{N} \sum_{i=1}^{N} \left( v_T(\hat{y}_i) - v_T(y_i) \right)^2}, \qquad v_T \text{ as above.}$$
+
+Whereas twMAE targets the (threshold-weighted) **median**, twRMSE targets the **mean**; reporting
+both is informative because their divergence reflects skewness/bias in the tail.
+
+### SEEPS (precipitation only)
+
+The Stable Equitable Error in Probability Space (Rodwell et al. 2010) is ECMWF's headline score
+for 24-h precipitation. Each forecast and observation is put into one of three categories:
+*dry* ($\le 0.2$ mm), *light* and *heavy*. The light/heavy boundary is set per station so that
+light:heavy occur 2:1 in climatology, i.e. at the $(2+p_1)/3$ climatological quantile, where
+$p_1$ is the station's dry probability. The penalty matrix (Rodwell Eq. 15) depends only on
+$p_1$; the implementation uses `scores.categorical.seeps`.
+
+SEEPS is negatively oriented (0 = perfect) and equitable: any no-skill forecast scores ≈ 1.
+
+Implementation choices:
+- **All cases, not only extremes.** SEEPS is computed over every station-date in the cell. It
+  complements the tail scores rather than being one.
+- **In-sample, per-station climatology.** $p_1$ and the light/heavy boundary come from the same
+  observations that are being verified. This is self-contained, but a long external climatology
+  would be more rigorous.
+- **Stability range.** Stations with $p_1 \notin [0.1, 0.85]$ are dropped (Rodwell's stability
+  range), as are stations with fewer than 30 observations.
+- **tp24 only.** It is skipped, with a printed note, for any other variable.
 
 ---
 
@@ -160,11 +221,38 @@ This is the score computed by the `scores` library's `crps_for_ensemble` functio
 
 For a binary extreme event $o \in \{0, 1\}$ with forecast probability $\hat{p}$:
 
-$$\text{BS} = (\hat{p} - o)^2$$
+$$\text{BS}_{\text{fair}} = (\hat{p} - o)^2 - \frac{\hat{p}(1-\hat{p})}{m-1}$$
 
-where $\hat{p} = \frac{1}{m}\sum_{k=1}^{m} \mathbf{1}(x_k > T)$ is the ensemble event frequency.
+where $\hat{p} = \frac{1}{m}\sum_{k=1}^{m} \mathbf{1}(x_k \ge T)$ is the ensemble event frequency.
+The second term is the **fair** correction (Ferro 2014): the plain score $(\hat{p}-o)^2$ carries a
+sampling penalty $p(1-p)/m$ for a finite ensemble, which the correction removes, so the expected
+score is that of the underlying probability and ensembles of different size are comparable.
+Equivalently, $\text{BS}_{\text{fair}}$ is the probability that two distinct members both disagree with
+the observation, so it is never negative. BSS is computed from the fair BS.
 
 Lower is better. Range: [0, 1].
+
+### Ensemble spread
+
+$$\text{spread} = \sqrt{\overline{\sigma^2}}, \qquad \sigma_i^2 = \frac{1}{m-1}\sum_{k=1}^{m}(x_{ik}-\bar{x}_i)^2$$
+
+the square root of the case-averaged **unbiased** member variance (Leutbecher & Palmer 2008;
+Leutbecher 2009; Fortin et al. 2014). ECMWF's guidance (Leutbecher 2009, §2.5) quantifies the
+spread–error relationship with region- and forecast-averaged *variances* and writes the consistency
+condition as $\tfrac{M}{M-1}\,\overline{s^2_{\text{biased}}} = \tfrac{M}{M+1}\,\overline{e^2}$, noting that the
+size factors are negligible for $M \approx 50$ but *"should be accounted for"* for $M \le 20$ — as for the
+8-member ensembles verified here. Averaging variances rather than standard deviations makes `ens_spread`
+directly comparable with `ens_mean_rmse`; for a perfectly calibrated $m$-member ensemble
+$\text{RMSE} \approx \sqrt{(m+1)/m}\;\text{spread}$.
+
+The skill side is the plain RMSE of the ensemble mean (`ens_mean_rmse`), the conventional quantity.
+Its expectation, $(1 + 1/m)\,\sigma^2$, includes the sampling error of an $m$-member mean, so a
+size-corrected version is also provided (Leutbecher & Palmer 2008):
+
+$$\text{RMSE}_{\text{fair}} = \sqrt{\overline{e^2} - \overline{s^2}/m}$$
+
+with $s^2$ the unbiased member variance; it estimates the error of the infinite-ensemble mean and is
+the right choice when ensembles of different size are compared.
 
 ### Brier Skill Score
 
@@ -172,13 +260,47 @@ $$\text{BSS} = 1 - \frac{\overline{\text{BS}}}{\overline{\text{BS}}_{\text{clim}
 
 where $\overline{\text{BS}}_{\text{clim}} = \bar{o}(1 - \bar{o})$ is the Brier score of a climatological forecast that always predicts the observed event frequency $\bar{o}$. Range: (−∞, 1]. 1 = perfect, 0 = no skill over climatology.
 
+### CRPS Skill Score
+
+$$\text{CRPSS} = 1 - \frac{\overline{\text{CRPS}}_{\text{fc}}}{\overline{\text{CRPS}}_{\text{clim}}}$$
+
+The numerator is the fair CRPS of the ensemble. The reference is the **sample climatology**: the
+empirical distribution of all observations pooled in the cell. Its mean CRPS against those same
+observations is half the Gini mean difference, $\tfrac{1}{2}\,\overline{|y_i - y_j|}$, computed in
+$O(n \log n)$. Range $(-\infty, 1]$; 1 = perfect, 0 = no better than climatology. Because the
+reference is in-sample, it is slightly harder to beat than an independent climatology.
+
+### Brier reliability
+
+The reliability term of Murphy's (1973) Brier-score decomposition, for the event "crossing $T$":
+
+$$\text{REL} = \frac{1}{N} \sum_{k=1}^{K} n_k \left(\bar{p}_k - \bar{o}_k\right)^2$$
+
+Here $\bar{p}_k$ is the mean forecast probability in bin $k$ ($K = 10$ equal-width bins), $\bar{o}_k$
+is the observed event frequency in that bin, and $n_k$ is the number of cases in the bin. 0 = perfectly
+reliable; lower is better. This term isolates **calibration**, which the threshold-weighted accuracy
+scores (twCRPS, Brier) mix with resolution. With few events per bin it is noisy, so read it alongside
+the reliability diagram (`ens_calibration_*.png` from `diagnostics/ensemble/diagnose_ens_extremes.py`).
+
 ### Extreme Spread/Skill Ratio
 
-A measure of ensemble reliability restricted to extreme cases:
+A measure of ensemble dispersion restricted to extreme cases, defined as the size-corrected ratio of
+the RMS ensemble spread to the RMSE of the ensemble mean:
 
-$$\text{extreme SSR} = \frac{\overline{\sigma^2_{\text{extreme}}}}{\overline{e^2_{\text{extreme}}}}$$
+$$\text{extreme SSR} = \sqrt{\frac{m+1}{m}}\;\frac{\sqrt{\overline{\sigma^2_{\text{extreme}}}}}{\sqrt{\overline{e^2_{\text{extreme}}}}}
+= \sqrt{\frac{m+1}{m}}\;\frac{\sqrt{\overline{\sigma^2_{\text{extreme}}}}}{\text{RMSE}_{\text{extreme}}}$$
 
-where $\sigma^2$ is the ensemble variance and $e^2$ the squared error of the ensemble mean, both averaged only over cases where the observation exceeds $T$. A value of 1 indicates a well-calibrated spread for extreme events; < 1 indicates under-dispersion.
+where $\sigma^2$ is the per-case ensemble variance (sample variance, `ddof=1`) and $e^2$ the squared
+error of the ensemble mean, both averaged only over cases where the observation crosses $T$.
+$\approx 1$ indicates calibrated spread; $< 1$ under-dispersion; $> 1$ over-dispersion.
+
+> **Two caveats.** (1) The factor $\sqrt{(m+1)/m}$ (Leutbecher 2009; Fortin et al. 2014) removes the
+> finite-ensemble effect — without it a perfectly calibrated $m$-member ensemble would score
+> $\sqrt{m/(m+1)}$ (0.94 for $m=8$) — but the ratio remains a dispersion diagnostic, not a
+> strictly-proper score. The same correction defines the all-cases `spread_skill_ratio`. (2) It is conditioned on the
+> **observation** being extreme, which introduces the usual spread–skill *conditioning bias*
+> (selecting on the outcome). Treat it as a tail-dispersion diagnostic, not as a calibration score;
+> for a proper calibration assessment use the twCRPS / reliability tools.
 
 ---
 
@@ -356,7 +478,9 @@ A result is considered **statistically significant** at the 95% level when the c
 
 ### Notes
 
-- Block resampling over dates preserves within-station spatial correlation (all stations for a given date are resampled together).
+- Block resampling over dates preserves the **spatial correlation between stations on the same date** (all stations for a given date are resampled together). Without it, correlated stations would be counted as independent, the confidence intervals would be too narrow, and too many cells would appear significant.
+- This applies to both the `local` and `quaver` backends. A cell with fewer than 5 distinct dates falls back to case-level resampling.
+- The block is a single day, so **temporal** autocorrelation between consecutive days is not accounted for. For persistent regimes (e.g. multi-day heatwaves) the intervals can still be somewhat too narrow.
 - For ensemble scores, bootstrap is applied to the date axis only; member resampling is not performed.
 - `n_samples: 200` is recommended for ensemble jobs to reduce compute time; `n_samples: 1000` for deterministic jobs or publication-quality results.
 
@@ -371,6 +495,20 @@ A result is considered **statistically significant** at the 95% level when the c
 - **Gneiting, T. & Raftery, A. E.** (2007). Strictly proper scoring rules, prediction, and estimation. *Journal of the American Statistical Association*, 102(477), 359–378.
 
 - **Mason, S. J.** (2003). Binary events. In I. T. Jolliffe & D. B. Stephenson (Eds.), *Forecast Verification: A Practitioner's Guide in Atmospheric Science*. Wiley.
+
+- **Ferro, C. A. T. & Stephenson, D. B.** (2011). Extremal Dependence Indices: Improved verification measures for deterministic forecasts of rare binary events. *Weather and Forecasting*, 26(5), 699–713. https://doi.org/10.1175/WAF-D-10-05030.1
+
+- **Stephenson, D. B., Casati, B., Ferro, C. A. T. & Wilson, C. A.** (2008). The extreme dependency score: a non-vanishing measure for forecasts of rare events. *Meteorological Applications*, 15(1), 41–50. https://doi.org/10.1002/met.53
+
+- **Rodwell, M. J., Richardson, D. S., Hewson, T. D. & Haiden, T.** (2010). A new equitable score suitable for verifying precipitation in numerical weather prediction. *Quarterly Journal of the Royal Meteorological Society*, 136(650), 1344–1363. https://doi.org/10.1002/qj.656
+
+- **Murphy, A. H.** (1973). A new vector partition of the probability score. *Journal of Applied Meteorology*, 12(4), 595–600.
+
+- **Leutbecher, M. & Palmer, T. N.** (2008). Ensemble forecasting. *Journal of Computational Physics*, 227(7), 3515–3539. https://doi.org/10.1016/j.jcp.2007.02.014
+
+- **Leutbecher, M.** (2009). Diagnosis of ensemble forecasting systems. *ECMWF Seminar on Diagnosis of Forecasting and Data Assimilation Systems*, 7–10 September 2009, 235–266. https://www.ecmwf.int/en/elibrary/78745-diagnosis-ensemble-forecasting-systems
+
+- **Fortin, V., Abaza, M., Anctil, F. & Turcotte, R.** (2014). Why should ensemble spread match the RMSE of the ensemble mean? *Journal of Hydrometeorology*, 15(4), 1708–1713. https://doi.org/10.1175/JHM-D-14-0008.1
 
 - **Efron, B. & Tibshirani, R. J.** (1993). *An Introduction to the Bootstrap*. Chapman and Hall.
 

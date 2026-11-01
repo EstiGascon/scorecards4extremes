@@ -49,10 +49,10 @@ ARGS="--config $CONFIG"
 [[ -n "$OROG"   ]] && ARGS="$ARGS --orog $OROG"
 [[ -n "$OUTPUT" ]] && ARGS="$ARGS --output-dir $OUTPUT"
 
-echo "Running: $PYTHON -u analysis/analyse_bias_orog.py $ARGS"
+echo "Running: $PYTHON -u diagnostics/deterministic/analyse_bias_orog.py $ARGS"
 echo ""
 
-$PYTHON -u analysis/analyse_bias_orog.py $ARGS
+$PYTHON -u diagnostics/deterministic/analyse_bias_orog.py $ARGS
 
 exit_code=$?
 echo ""

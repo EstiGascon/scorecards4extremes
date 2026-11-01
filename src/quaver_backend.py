@@ -166,7 +166,7 @@ def _format_threshold_suffix(config):
         value = threshold_cfg.get('fixed', {}).get('value', 0)
         if variable == 'tp24':
             return f"_{value:.0f}mm"
-        elif variable == '2t':
+        elif variable in ('2t', 'mx2t', 'mn2t'):
             return f"_{value:.1f}C"
         elif variable == '10ff':
             return f"_{value:.1f}ms"
@@ -702,7 +702,8 @@ def compute_scores_quaver(config, data, threshold, event_type, model_names, is_e
 
             if 'ens_spread' in use_vtb or 'spread' in use_vtb:
                 for prefix, members in [('fc1', fc1_members), ('fc2', fc2_members)]:
-                    row[f'ens_spread_{prefix}'] = np.nanmean(np.nanstd(members, axis=1))
+                    # sqrt(mean unbiased variance) — same definition as ens_scores.ens_spread
+                    row[f'ens_spread_{prefix}'] = np.sqrt(np.nanmean(np.nanvar(members, axis=1, ddof=1)))
 
             if any(s in use_vtb for s in ('ens_mean_rmse', 'rmse')):
                 for prefix, members in [('fc1', fc1_members), ('fc2', fc2_members)]:
@@ -1185,7 +1186,7 @@ def _compute_ensemble_score(score_name, members, obs, threshold, event_type):
         _, fair_val = _vtb_crps(members, obs)
         return fair_val
     elif score_name in ('ens_spread', 'spread'):
-        return np.nanmean(np.nanstd(members, axis=1))
+        return np.sqrt(np.nanmean(np.nanvar(members, axis=1, ddof=1)))
     elif score_name in ('ens_mean_rmse', 'rmse'):
         ens_mean = np.nanmean(members, axis=1)
         return np.sqrt(np.nanmean((ens_mean - obs) ** 2))
@@ -1375,7 +1376,12 @@ def _bootstrap_paired_significance_det(fc1, fc2, obs, threshold,
 
 
 def _compute_tw_spread_skill(members, obs, threshold, event_type):
-    """Threshold-weighted spread-skill ratio for extreme cases."""
+    """Size-corrected spread-skill ratio on extreme cases:
+    sqrt((M+1)/M) * sqrt(mean unbiased variance) / RMSE(ens mean)  (1 = perfect for any M).
+
+    Same definition as ens_scores' extreme_spread_skill_ratio (cases where the obs
+    reaches the threshold, >= for 'above' / <= for 'below').
+    """
     n_samples, n_members = members.shape
     spreads = []
     errors = []
@@ -1389,17 +1395,17 @@ def _compute_tw_spread_skill(members, obs, threshold, event_type):
             t = threshold[i]
         else:
             t = float(threshold)
-        is_extreme = (obs[i] > t) if event_type == 'above' else (obs[i] < t)
+        is_extreme = (obs[i] >= t) if event_type == 'above' else (obs[i] <= t)
         if not is_extreme:
             continue
-        spreads.append(np.nanstd(members[i, :]))
-        errors.append(np.abs(np.nanmean(members[i, :]) - obs[i]))
+        spreads.append(np.nanvar(members[i, :], ddof=1))
+        errors.append((np.nanmean(members[i, :]) - obs[i]) ** 2)
 
     if len(spreads) == 0:
         return np.nan
-    mean_spread = np.mean(spreads)
-    mean_error = np.mean(errors)
-    return mean_spread / mean_error if mean_error > 0 else np.nan
+    spread = np.sqrt(np.mean(spreads))
+    rmse = np.sqrt(np.mean(errors))
+    return np.sqrt((n_members + 1.0) / n_members) * spread / rmse if rmse > 0 else np.nan
 
 
 # =============================================================================
@@ -1493,6 +1499,8 @@ def _variable_to_param(variable):
     """Map config variable name to MARS/STVL parameter name."""
     mapping = {
         '2t': '2t',
+        'mx2t': '2t',    # derived from 6-hourly 2t (daily max at scoring time)
+        'mn2t': '2t',    # derived from 6-hourly 2t (daily min at scoring time)
         '10ff': '10si',  # 10m wind speed (instantaneous)
         'tp24': 'tp',
     }
@@ -1527,6 +1535,7 @@ def _get_vtb_domain(area):
         'europe':           (68, -15, 27, 50),
         'nh_extratropics':  (90, -180, 20, 180),
         'tropics':          (20, -180, -20, 180),
+        'nh_extratropics_tropics': (90, -180, -20, 180),
     }
     if area in _AREAS:
         north, west, south, east = _AREAS[area]
@@ -2036,7 +2045,7 @@ def _fieldsets_to_dataframe(fc1, fc2, obs, date, steps,
                 row['fc2_value'] = fc2_val * fc2_unit_factor
 
             # Apply preprocessing for 2t
-            if variable == '2t':
+            if variable in ('2t', 'mx2t', 'mn2t'):
                 # Temperature conversion K → °C (VTB/MARS always returns Kelvin)
                 if row.get('obs_value', 0) > 100:
                     row['obs_value'] -= 273.15

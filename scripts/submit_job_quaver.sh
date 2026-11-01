@@ -56,6 +56,33 @@ source "/home/moeg/scorecards4extremes/.venv/bin/activate"
 # vtb (VTB / quaver toolbox) — python 3.12 build, matches the venv interpreter.
 export PYTHONPATH="/usr/local/apps/vtb/1.3.3/lib/python3.12/site-packages:${PYTHONPATH}"
 
+# Optional: merge chunked extraction outputs before scoring. Set by the watcher
+# (scripts/watch_and_score.sh) via --export=ALL,S4E_MERGE_CHUNKS=<n_chunks>.
+# The merge (a pd.concat of large ensemble parquets) runs HERE, inside the 128G
+# scoring job, instead of in the 1G watcher where it was OOM-killed. If the
+# merge fails we must NOT fall through to run.py, which would silently
+# re-extract everything from scratch.
+if [[ -n "${S4E_MERGE_CHUNKS:-}" ]]; then
+    echo "=========================================="
+    echo "Merging ${S4E_MERGE_CHUNKS} chunk outputs before scoring"
+    echo "=========================================="
+    python -u scripts/chunk_extraction.py merge "$CONFIG" --n-chunks "$S4E_MERGE_CHUNKS"
+    merge_rc=$?
+    if [[ $merge_rc -ne 0 ]]; then
+        echo "MERGE FAILED (exit $merge_rc) — aborting before scoring to avoid re-extraction"
+        exit $merge_rc
+    fi
+    echo ""
+fi
+
+# Scoring-only runs over an existing extraction (see watch_and_score.sh extra
+# configs): refuse to start if the extracted day files are missing, otherwise
+# run.py would silently re-extract everything. Exits before the retry logic.
+if [[ "${S4E_REQUIRE_EXTRACTED:-0}" == "1" ]]; then
+    python -u scripts/check_extracted.py "$CONFIG" || {
+        echo "EXTRACTED DATA MISSING — not running scoring (would re-extract)"; exit 3; }
+fi
+
 echo ""
 echo "=========================================="
 echo "Running: python run.py $CONFIG"

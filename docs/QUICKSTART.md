@@ -146,7 +146,7 @@ Then change the `plot:` section and run again:
 ### Run diagnostic Q-Q plots
 
 ```bash
-.venv/bin/python diagnostics/plot_qq_extremes.py \
+.venv/bin/python diagnostics/qq/plot_qq_extremes.py \
   --config my_run.yaml \
   --day 3 --season DJF --orog complex
 ```

@@ -85,8 +85,6 @@ filter:
   remove_coastal_stations: true  # Remove coastal stations (keep inland only)
   coastal_lsm_threshold: 0.9     # LSM threshold (0=water, 1=land, default 0.9)
   
-  remove_outliers: false
-  outlier_threshold_std: 5.0
   
   # Precipitation quality control
   max_valid_precipitation: 800.0  # Remove observations > 800mm (likely bad data)

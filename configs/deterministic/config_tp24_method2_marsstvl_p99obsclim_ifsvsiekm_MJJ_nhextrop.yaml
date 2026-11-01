@@ -1,0 +1,170 @@
+# ============================================================================
+# DETERMINISTIC — METHOD 2 (MARS + STVL) — tp24 heavy precip extremes (p99), MJJ
+# NH EXTRATROPICS variant
+# ============================================================================
+# Same as config_tp24_method2_marsstvl_p99obsclim_ifsvsiekm_MJJ.yaml (area:
+# "europe") but with area: "nh_extratropics" — separate extraction + output
+# directory since the area filter changes which stations are pulled in.
+#
+# Evaluated model  : IFS deterministic operational (ifs_oper, od/oper/0001)  forecast_model1
+# Reference model  : iekm research deterministic   (iekm,     rd/oper/iekm) forecast_model2
+#
+# iekm runs on tco2559 (finer grid than operational IFS's tco1279) — uses its
+# own lsm_tco2559.grib/destine_orog.grib aux fields. sdfor_path stays the
+# shared reference sdfor_tco1279.grib.
+#
+# Period: 2026-05-13 to 2026-08-19, single season "MJJ" (May-Jun-Jul; trailing
+# Aug dates are naturally excluded by the season filter).
+# forecast_days 1-5 ONLY (24-hourly): iekm (rd/oper) is only archived out to
+# step 120h (day 5) — confirmed via MARS probe.
+# Threshold: per-station p99 from local obs climatology (heavy precip).
+# ============================================================================
+
+variable: "tp24"
+start_date: "2026-05-13"
+end_date: "2026-08-19"
+mode: "deterministic"
+backend: "local"
+forecast_days: [1, 2, 3, 4, 5]
+lead_time_frequency: 24
+skip_extraction_if_exists: false
+skip_scoring_if_exists: false
+
+# ============================================================================
+# STEP 1: READ DATA — retrieve deterministic HRES from MARS (forecasts) + STVL (obs)
+# ============================================================================
+read_data:
+  forecast_model1:                       # IFS deterministic operational (reference)
+    name: "ifs_oper"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: od
+      type: fc
+      stream: oper
+      expver: "0001"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+      # database: fdb                    # uncomment if MARS reports "not found"
+
+  forecast_model2:                       # iekm research deterministic (evaluated)
+    name: "iekm"
+    source: "mars"
+    unit_conversion_factor: 1000.0       # m -> mm
+    mars:
+      class: rd
+      type: fc
+      stream: oper
+      expver: "iekm"
+      levtype: sfc
+      time: "00"
+      base_path: "/ec/vol/destine/continuous_evaluation/precip/forecast/raw"
+      # database: fdb                    # uncomment if the research expver needs FDB
+
+  observation_source: "stvl"
+  stvl:
+    sources: ["synop", "hdobs"]
+    base_path: "/ec/vol/destine/continuous_evaluation/precip/obs/raw"
+
+# ============================================================================
+# STEP 2: PRE-PROCESS DATA
+# ============================================================================
+preprocess:
+  wind_speed_from_components: false
+  lapse_rate_correction: false
+  lapse_rate: -0.0065
+  precipitation_accumulation_hours: 24
+
+# ============================================================================
+# STEP 3: EXTRACT POINT DATA
+# ============================================================================
+extract_points:
+  output_path: "./extracted_points/tp24_method2_marsstvl_p99obsclim_ifsvsiekm_MJJ_nhextrop"
+  save_format: "pandas"
+  area: "nh_extratropics"
+
+# ============================================================================
+# AUXILIARY FIELDS (iekm runs on the finer tco2559 grid — separate lsm/orog)
+# ============================================================================
+auxiliary_fields:
+  model1:                                # IFS deterministic operational
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco1279.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/hres_orog.grib"
+  model2:                                # iekm (tco2559)
+    lsm_path:  "/ec/vol/destine/continuous_evaluation/lsm_tco2559.grib"
+    orog_path: "/ec/vol/destine/continuous_evaluation/destine_orog.grib"
+  sdfor_path:  "/ec/vol/destine/continuous_evaluation/sdfor_tco1279.grib"
+
+# ============================================================================
+# STEP 4: FILTER DATA — MJJ season, orography split (identical to europe config)
+# ============================================================================
+filter:
+  lead_times: null
+  season: "MJJ"
+  orography_type: ["low", "mid", "high"]
+  orography_ranges:
+    low:  [0, 40]
+    mid:  [40, 120]
+    high: [120, 3000]
+  remove_coastal_stations: true
+  coastal_lsm_threshold: 0.9
+  max_valid_precipitation: 800.0
+
+# ============================================================================
+# STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
+# ============================================================================
+threshold:
+  method: "local_obs_climatology"
+  event_type: "above"
+  local_obs_climatology:
+    path: "./obs_clim_local"
+    parameter: "tp"
+    percentile: 99
+    window_days: 1
+    n_years: 20
+    first_year: 2005
+    last_year: 2024
+    min_availability_pct: 65
+
+# ============================================================================
+# STEP 6: SCORES (deterministic)
+# ============================================================================
+scores:
+  deterministic:
+    - "ETS"
+    - "PSS"
+    - "POD"
+    - "FAR"
+    - "twMAE"
+    - "twRMSE"
+    - "bias"
+    - "mae"
+    - "rmse"
+  stratify_by:
+    - "lead_time"
+
+# ============================================================================
+# STEP 7: BOOTSTRAP
+# ============================================================================
+bootstrap:
+  enabled: true
+  n_samples: 500
+  confidence_level: 0.95
+
+# ============================================================================
+# STEP 8: SAVE RESULTS
+# ============================================================================
+save:
+  output_directory: "./results/tp24_method2_marsstvl_p99obsclim_ifsvsiekm_MJJ_nhextrop"
+  save_scores_csv: true
+  save_forecast_obs_pairs: false
+
+# ============================================================================
+# STEP 9: PLOT
+# ============================================================================
+plot:
+  heatmap_style: "smooth"
+  enabled: true
+  dpi: 300
+  format: "png"

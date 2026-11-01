@@ -69,6 +69,76 @@ def calculate_pss(forecast, observation, threshold, event_type):
     return pod - pofd
 
 
+def _hit_rate_false_alarm_rate(forecast, observation, threshold, event_type):
+    """Return (H, F) = (hit rate = POD, false-alarm rate = POFD) from the 2x2 table.
+
+    H and F are the two quantities the extremal-dependence indices (EDI/SEDI) are
+    built from. Returns (nan, nan) if there are no valid pairs or an empty margin.
+    """
+    valid = _nan_mask(forecast, observation)
+    fc_v, obs_v = forecast[valid], observation[valid]
+    thr_v = threshold[valid] if isinstance(threshold, np.ndarray) else threshold
+    if len(fc_v) == 0:
+        return np.nan, np.nan
+    if event_type == 'below':
+        fc_binary = (fc_v <= thr_v).astype(int)
+        obs_binary = (obs_v <= thr_v).astype(int)
+    else:
+        fc_binary = (fc_v >= thr_v).astype(int)
+        obs_binary = (obs_v >= thr_v).astype(int)
+    hits, misses, false_alarms, cn = calculate_contingency_table(fc_binary, obs_binary)
+    H = hits / (hits + misses) if (hits + misses) > 0 else np.nan
+    F = false_alarms / (false_alarms + cn) if (false_alarms + cn) > 0 else np.nan
+    return H, F
+
+
+def calculate_sedi(forecast, observation, threshold, event_type):
+    """Symmetric Extremal Dependence Index (Ferro & Stephenson, 2011).
+
+        SEDI = [ln F - ln H - ln(1-F) + ln(1-H)] / [ln F + ln H + ln(1-F) + ln(1-H)]
+
+    with H = hit rate (POD) and F = false-alarm rate (POFD). Unlike ETS/PSS, SEDI does
+    NOT degenerate to a trivial value as the event base rate -> 0, so it is the
+    recommended categorical score for rare/extreme events. Range (-1, 1];
+    0 = no skill, 1 = perfect.
+
+    IMPORTANT (bias caveat): EDI/SEDI are only base-rate independent when the forecast
+    frequency bias B = (H_count+F_count)/(H_count+M_count) is ~ 1. The forecasts scored
+    here are NOT bias-corrected, so a SEDI difference between two models reflects BOTH
+    their discrimination and their frequency-bias behaviour. Read it as a joint statement,
+    and cross-check with the frequency bias / base-rate columns. See docs/USER_GUIDE.md.
+    """
+    H, F = _hit_rate_false_alarm_rate(forecast, observation, threshold, event_type)
+    if np.isnan(H) or np.isnan(F):
+        return np.nan
+    # Logs blow up at the margins (H or F equal to 0 or 1) -> undefined, return NaN.
+    if H in (0.0, 1.0) or F in (0.0, 1.0):
+        return np.nan
+    num = np.log(F) - np.log(H) - np.log(1.0 - F) + np.log(1.0 - H)
+    den = np.log(F) + np.log(H) + np.log(1.0 - F) + np.log(1.0 - H)
+    return num / den if den != 0 else np.nan
+
+
+def calculate_edi(forecast, observation, threshold, event_type):
+    """Extremal Dependence Index (Ferro & Stephenson, 2011).
+
+        EDI = [ln F - ln H] / [ln F + ln H]
+
+    with H = hit rate (POD) and F = false-alarm rate (POFD). Non-degenerate for rare
+    events like SEDI, but (unlike SEDI) it is not symmetric under swapping events with
+    non-events and is easier to hedge; reported alongside SEDI as a cross-check.
+    Range (-1, 1]; 0 = no skill, 1 = perfect. Same frequency-bias caveat as SEDI.
+    """
+    H, F = _hit_rate_false_alarm_rate(forecast, observation, threshold, event_type)
+    if np.isnan(H) or np.isnan(F):
+        return np.nan
+    if H in (0.0, 1.0) or F in (0.0, 1.0):
+        return np.nan
+    num = np.log(F) - np.log(H)
+    den = np.log(F) + np.log(H)
+    return num / den if den != 0 else np.nan
+
+
 def bootstrap_confidence_interval(forecast, observation, threshold, event_type, score_func, n_bootstrap=1000, confidence=0.95, max_samples=500000):
     """Calculate bootstrap confidence intervals for a score
     
@@ -227,6 +297,8 @@ def calculate_twrmse(forecast, observation, threshold, event_type):
     twRMSE = sqrt(mean (v(fc) - v(obs))^2)
     """
     valid = ~(np.isnan(forecast) | np.isnan(observation))
+    if isinstance(threshold, np.ndarray):
+        valid &= ~np.isnan(threshold)  # keep only rows with a valid threshold (matches twMAE)
     if event_type == 'below':
         fc_v = np.minimum(forecast[valid], threshold[valid] if isinstance(threshold, np.ndarray) else threshold)
         obs_v = np.minimum(observation[valid], threshold[valid] if isinstance(threshold, np.ndarray) else threshold)
@@ -236,6 +308,73 @@ def calculate_twrmse(forecast, observation, threshold, event_type):
     if len(fc_v) == 0:
         return np.nan
     return float(np.sqrt(np.mean((fc_v - obs_v) ** 2)))
+
+
+def calculate_seeps(forecast, observation, station_ids, dry_threshold=0.2, min_obs=30):
+    """SEEPS — Stable Equitable Error in Probability Space (Rodwell et al. 2010).
+
+    PRECIPITATION ONLY. Uses the validated penalty matrix from ``scores.categorical.seeps``
+    (Rodwell Eq. 15), with the three categories dry / light / heavy. For each station the
+    climatological dry probability p1 and the light/heavy boundary are estimated from THAT
+    station's observations in the current evaluation cell. This is an *in-sample*,
+    station-specific climatology (self-contained, no external files); a long external
+    reference (e.g. from ``diagnostics/climatology/build_tp24_climatology.py``) would be more
+    rigorous and is the recommended upgrade. Stations with p1 outside [0.1, 0.85] (Rodwell
+    stability range) or with fewer than ``min_obs`` values are dropped.
+
+    ``dry_threshold`` (default 0.2) is the dry/wet boundary in the obs units (mm for tp24).
+    Negatively oriented: lower = better. Returns the mean SEEPS over retained station-date
+    pairs, or NaN if no station qualifies.
+    """
+    import pandas as pd
+    import xarray as xr
+    from scores.categorical import seeps as _seeps_fn
+
+    fc = np.asarray(forecast, dtype=float)
+    ob = np.asarray(observation, dtype=float)
+    st = np.asarray(station_ids)
+    valid = ~(np.isnan(fc) | np.isnan(ob))
+    fc, ob, st = fc[valid], ob[valid], st[valid]
+    if len(ob) < min_obs:
+        return np.nan
+
+    # Per-station in-sample precip climatology: p1 (dry prob) and light/heavy boundary.
+    df = pd.DataFrame({'st': st, 'ob': ob})
+    p1_map, tlh_map = {}, {}
+    for s, g in df.groupby('st'):
+        o = g['ob'].values
+        if len(o) < min_obs:
+            continue
+        p1 = float(np.mean(o <= dry_threshold))
+        if not (0.1 <= p1 <= 0.85):          # Rodwell stability range
+            continue
+        p3 = (1.0 - p1) / 3.0                 # heavy-category probability
+        tlh = float(np.quantile(o, 1.0 - p3))  # boundary at the (2+p1)/3 climatological quantile
+        if tlh <= dry_threshold:
+            continue
+        p1_map[s] = p1
+        tlh_map[s] = tlh
+    if not p1_map:
+        return np.nan
+
+    keep = np.array([s in p1_map for s in st])
+    if keep.sum() < min_obs:
+        return np.nan
+    fc_k, ob_k, st_k = fc[keep], ob[keep], st[keep]
+    p1_arr = np.array([p1_map[s] for s in st_k])
+    tlh_arr = np.array([tlh_map[s] for s in st_k])
+    try:
+        res = _seeps_fn(
+            xr.DataArray(fc_k, dims=['s']),
+            xr.DataArray(ob_k, dims=['s']),
+            prob_dry=xr.DataArray(p1_arr, dims=['s']),
+            light_heavy_threshold=xr.DataArray(tlh_arr, dims=['s']),
+            dry_light_threshold=dry_threshold,
+        )
+        return float(np.asarray(res.values))
+    except Exception as e:
+        print(f"    SEEPS error: {e}")
+        return np.nan
 
 
 def calculate_all_scores(forecast, observation, threshold, event_type, selected_scores):
@@ -265,6 +404,10 @@ def calculate_all_scores(forecast, observation, threshold, event_type, selected_
         scores['POD'] = calculate_pod(forecast, observation, threshold, event_type)
     if 'FAR' in selected_scores:
         scores['FAR'] = calculate_far(forecast, observation, threshold, event_type)
+    if 'SEDI' in selected_scores:
+        scores['SEDI'] = calculate_sedi(forecast, observation, threshold, event_type)
+    if 'EDI' in selected_scores:
+        scores['EDI'] = calculate_edi(forecast, observation, threshold, event_type)
     
     # Threshold-weighted scores
     if 'twMAE' in selected_scores:
@@ -290,6 +433,10 @@ def run_step6(config, data, threshold, event_type, model_names):
     
     cfg = config['scores']
     selected_scores = cfg['deterministic']
+    if 'SEEPS' in selected_scores and config.get('variable') != 'tp24':
+        # SEEPS is a precipitation score (dry/light/heavy categories); meaningless otherwise.
+        print(f"  NOTE: SEEPS is precipitation-only — skipped for variable '{config.get('variable')}'")
+        selected_scores = [s for s in selected_scores if s != 'SEEPS']
     
     print(f"\nComparing two forecast models:")
     print(f"  Model 1: {model_names['fc1_name']}")
@@ -334,11 +481,15 @@ def run_step6(config, data, threshold, event_type, model_names):
                 fc2_day = day_data['fc2_value'].values[valid_mask]
                 obs_day = day_data['obs_value'].values[valid_mask]
                 day_threshold = day_threshold_series.values[valid_mask]
+                dates_day = (day_data['date'].values[valid_mask]
+                             if 'date' in day_data.columns else None)
             else:
                 fc1_day = day_data['fc1_value'].values
                 fc2_day = day_data['fc2_value'].values
                 obs_day = day_data['obs_value'].values
                 day_threshold = threshold
+                dates_day = (day_data['date'].values
+                             if 'date' in day_data.columns else None)
             
             # Get the step range for this day
             steps_in_day = sorted(day_data['step'].unique())
@@ -346,6 +497,13 @@ def run_step6(config, data, threshold, event_type, model_names):
             
             day_scores_fc1 = calculate_all_scores(fc1_day, obs_day, day_threshold, event_type, selected_scores)
             day_scores_fc2 = calculate_all_scores(fc2_day, obs_day, day_threshold, event_type, selected_scores)
+
+            # SEEPS (precip only) needs per-station climatology, so it is computed here from
+            # the FULL day_data (with station_id), independent of the extreme-threshold mask.
+            if 'SEEPS' in selected_scores and 'station_id' in day_data.columns:
+                _st = day_data['station_id'].values
+                day_scores_fc1['SEEPS'] = calculate_seeps(day_data['fc1_value'].values, day_data['obs_value'].values, _st)
+                day_scores_fc2['SEEPS'] = calculate_seeps(day_data['fc2_value'].values, day_data['obs_value'].values, _st)
 
             # Count exceedances (obs crossing the threshold)
             if event_type == 'below':
@@ -382,6 +540,8 @@ def run_step6(config, data, threshold, event_type, model_names):
                     'PSS': calculate_pss,
                     'POD': calculate_pod,
                     'FAR': calculate_far,
+                    'SEDI': calculate_sedi,
+                    'EDI': calculate_edi,
                     'twMAE': calculate_twmae,
                     'twRMSE': calculate_twrmse,
                     'bias': lambda fc, obs, thr, et: np.nanmean(fc - obs),
@@ -394,6 +554,25 @@ def run_step6(config, data, threshold, event_type, model_names):
                 n_day  = len(fc1_day)
                 rng    = np.random.default_rng()
 
+                # Block bootstrap over DATES: resample whole forecast dates (all stations
+                # for a drawn date kept together) so spatial correlation between stations
+                # on the same date is preserved. iid row resampling would treat all
+                # station-date pairs as independent, underestimate the CI width and
+                # over-flag significance. Falls back to iid rows when the date column is
+                # absent or there are too few distinct dates (<5) to block-resample.
+                date_blocks = None
+                if dates_day is not None:
+                    _uniq, _inv = np.unique(dates_day, return_inverse=True)
+                    if len(_uniq) >= 5:
+                        date_blocks = [np.where(_inv == k)[0] for k in range(len(_uniq))]
+                n_dates = len(date_blocks) if date_blocks is not None else 0
+
+                def _resample_idx():
+                    if date_blocks is not None:
+                        drawn = rng.integers(0, n_dates, n_dates)
+                        return np.concatenate([date_blocks[d] for d in drawn])
+                    return rng.integers(0, n_day, n_day)
+
                 for score_name in selected_scores:
                     score_func = score_func_map.get(score_name)
                     if score_func:
@@ -402,10 +581,11 @@ def run_step6(config, data, threshold, event_type, model_names):
                         # shared obs variance, giving much higher power than
                         # comparing non-overlapping independent CIs.
                         diff_samples = []
-                        indices_pool = rng.integers(0, n_day, size=(n_boot, n_day))
-                        for b_idx in indices_pool:
-                            s1 = score_func(fc1_day[b_idx], obs_day[b_idx], day_threshold if np.isscalar(day_threshold) else day_threshold[b_idx], event_type)
-                            s2 = score_func(fc2_day[b_idx], obs_day[b_idx], day_threshold if np.isscalar(day_threshold) else day_threshold[b_idx], event_type)
+                        for _ in range(n_boot):
+                            b_idx = _resample_idx()
+                            thr_b = day_threshold if np.isscalar(day_threshold) else day_threshold[b_idx]
+                            s1 = score_func(fc1_day[b_idx], obs_day[b_idx], thr_b, event_type)
+                            s2 = score_func(fc2_day[b_idx], obs_day[b_idx], thr_b, event_type)
                             if not (np.isnan(s1) or np.isnan(s2)):
                                 diff_samples.append(s2 - s1)
                         if len(diff_samples) >= n_boot * 0.5:

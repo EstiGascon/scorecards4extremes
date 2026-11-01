@@ -91,8 +91,6 @@ filter:
     high: [120, 3000]
   remove_coastal_stations: false
   coastal_lsm_threshold: 0.9
-  remove_outliers: false
-  outlier_threshold_std: 5.0
 
 # ============================================================================
 # STEP 5: THRESHOLD — per-station 99th pct from local obs climatology files
