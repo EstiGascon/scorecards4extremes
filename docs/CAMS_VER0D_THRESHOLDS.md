@@ -49,7 +49,7 @@ regulatory value exists.
 | pm10 | Airbase | 45 µg/m³ | EU 2030 24h limit (= WHO 2021 24h guideline) | 5.6% / 0.4% |
 | pm10 | AirNow | 45 µg/m³ | same as Airbase (US 150 µg/m³ gives <0.5%) | 7.0% / 8.4% |
 | pm10 | China | 150 µg/m³ | CN Grade II 24h limit | 5.9% / 0.2% |
-| aod500 | AERONET | 0.5 | – | not tested |
+| aod500 | AERONET | 0.5 | data-driven (≈ 95th percentile of AERONET obs) | 6.1% / 4.4% |
 
 Why not the regulatory values everywhere: most limits are 8h/24h/annual means,
 but the pipeline scores native 3-hourly station values, and several limits are
@@ -102,6 +102,11 @@ network in `NETWORKS` in `src/cams_extract.py`.
   and events at 75 are almost all false alarms (FAR ≈ 1).
 - **PM10:** AirNow is the only case with more events in summer than winter
   (probably wildfire smoke and dust); China summer has spurious model peaks.
+- **AOD500 AERONET:** checked on the full-year 2025 extraction (day-1 rows, 434
+  stations). 0.5 is exceeded by 6.4% of obs over the year, with monthly values
+  from 3.9% (Nov) to 9.9% (Mar), highest in Feb–Jun (dust/smoke season), so
+  there is no summer drop-off as for the gases. Both models forecast fewer
+  events than observed (year: icki 4.7%, oper 5.5%).
 
 ## Changing a threshold
 
